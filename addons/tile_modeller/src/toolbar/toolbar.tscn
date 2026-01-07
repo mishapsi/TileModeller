@@ -1,0 +1,84 @@
+[gd_scene format=3 uid="uid://cogsqfaa3p3rw"]
+
+[ext_resource type="Script" uid="uid://cit3tapyc0rau" path="res://addons/tile_modeller/src/toolbar/toolbar.gd" id="1_oqmer"]
+[ext_resource type="Texture2D" uid="uid://drvsvuuxmy65x" path="res://addons/tile_modeller/icons/tile_paint.svg" id="1_p3yi6"]
+[ext_resource type="Texture2D" uid="uid://caorn0odyuw7v" path="res://addons/tile_modeller/icons/vertex_mode.svg" id="2_oqmer"]
+[ext_resource type="Texture2D" uid="uid://bkj2cmdwctnej" path="res://addons/tile_modeller/icons/paint_vertex.svg" id="3_alw74"]
+[ext_resource type="Texture2D" uid="uid://bhqsxaikorn5s" path="res://addons/tile_modeller/icons/rotate_tile.svg" id="5_alw74"]
+
+[sub_resource type="ButtonGroup" id="ButtonGroup_5o3s3"]
+
+[node name="HBoxContainer" type="HBoxContainer" unique_id=1207829616]
+visible = false
+offset_right = 104.0
+offset_bottom = 32.0
+script = ExtResource("1_oqmer")
+
+[node name="TilePaint" type="Button" parent="." unique_id=1433668016]
+custom_minimum_size = Vector2(36, 36)
+layout_mode = 2
+toggle_mode = true
+button_pressed = true
+button_group = SubResource("ButtonGroup_5o3s3")
+icon = ExtResource("1_p3yi6")
+expand_icon = true
+
+[node name="VertexMode" type="Button" parent="." unique_id=564806941]
+custom_minimum_size = Vector2(36, 36)
+layout_mode = 2
+toggle_mode = true
+button_group = SubResource("ButtonGroup_5o3s3")
+icon = ExtResource("2_oqmer")
+expand_icon = true
+
+[node name="PaintVertex" type="Button" parent="." unique_id=1693295580]
+custom_minimum_size = Vector2(36, 36)
+layout_mode = 2
+toggle_mode = true
+button_group = SubResource("ButtonGroup_5o3s3")
+icon = ExtResource("3_alw74")
+expand_icon = true
+
+[node name="VSeparator" type="VSeparator" parent="." unique_id=676992650]
+layout_mode = 2
+
+[node name="TileOrientation" type="HBoxContainer" parent="." unique_id=1273083088]
+unique_name_in_owner = true
+layout_mode = 2
+
+[node name="RotateTile" type="Button" parent="TileOrientation" unique_id=123454839]
+custom_minimum_size = Vector2(36, 36)
+layout_mode = 2
+icon = ExtResource("5_alw74")
+expand_icon = true
+
+[node name="VertexSnap" type="HBoxContainer" parent="." unique_id=1599949421]
+unique_name_in_owner = true
+layout_mode = 2
+
+[node name="Label" type="Label" parent="VertexSnap" unique_id=407055341]
+layout_mode = 2
+text = "Snap"
+
+[node name="VertexSnapSpinBox" type="SpinBox" parent="VertexSnap" unique_id=1561087893]
+unique_name_in_owner = true
+layout_mode = 2
+suffix = "px"
+
+[node name="VertexColor" type="HBoxContainer" parent="." unique_id=1217085508]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+
+[node name="VertexColorButton" type="ColorPickerButton" parent="VertexColor" unique_id=151453097]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(42, 36)
+layout_mode = 2
+color = Color(1, 1, 1, 1)
+
+[connection signal="pressed" from="TilePaint" to="." method="_on_tile_paint_pressed"]
+[connection signal="pressed" from="VertexMode" to="." method="_on_vertex_mode_pressed"]
+[connection signal="pressed" from="PaintVertex" to="." method="_on_paint_vertex_pressed"]
+[connection signal="pressed" from="TileOrientation/RotateTile" to="." method="_on_rotate_tile_pressed"]
+[connection signal="value_changed" from="VertexSnap/VertexSnapSpinBox" to="." method="_on_spin_box_value_changed"]
+[connection signal="color_changed" from="VertexColor/VertexColorButton" to="." method="_on_color_picker_button_color_changed"]
