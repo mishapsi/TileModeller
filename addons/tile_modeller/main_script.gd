@@ -22,7 +22,7 @@ func _enter_tree():
 	add_custom_type("TileModeller",
 		"TileModeller",
 		preload("uid://chmhpbke7rmjq"),
-		preload("uid://c8gblwg4hgl5f"))
+		preload("uid://db6f08svi1pat"))
 
 	add_node_3d_gizmo_plugin(planeGZM)
 	add_node_3d_gizmo_plugin(vertexGZM)

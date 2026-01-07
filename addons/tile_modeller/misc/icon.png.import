@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://c8gblwg4hgl5f"
-path="res://.godot/imported/icon_brush.png-2f1b1194b9a0f25a410caedae09da13c.ctex"
+uid="uid://db6f08svi1pat"
+path="res://.godot/imported/icon.png-2e957f2c41ba4dfc99130de004569cce.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://addons/tile_modeller/misc/icon_brush.png"
-dest_files=["res://.godot/imported/icon_brush.png-2f1b1194b9a0f25a410caedae09da13c.ctex"]
+source_file="res://addons/tile_modeller/misc/icon.png"
+dest_files=["res://.godot/imported/icon.png-2e957f2c41ba4dfc99130de004569cce.ctex"]
 
 [params]
 
