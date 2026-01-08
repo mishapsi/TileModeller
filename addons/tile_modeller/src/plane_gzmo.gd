@@ -53,6 +53,7 @@ func create_minor_grid(
 
 		mesh.surface_add_vertex(origin + forward * offset + right * half_extent * major)
 		mesh.surface_add_vertex(origin + forward * offset - right * half_extent * major)
+		mesh.surface_set_color(Color.WHITE)
 
 	mesh.surface_end()
 	return mesh
@@ -162,43 +163,43 @@ func _redraw(gizmo: EditorNode3DGizmo):
 
 	gizmo.add_mesh(minor, minor_grid_material, Transform3D.IDENTITY)
 	gizmo.add_mesh(major, major_grid_material, Transform3D.IDENTITY)
+	if brush.tool_mode in [TileModeller.TOOL_MODE.TILE]:
+		var axes = TileEditorPlugin.plane_axes_from_normal_hardcoded(normal)
+		var right : Vector3 = axes.right
+		var down  : Vector3 = axes.down
 
-	var axes = TileEditorPlugin.plane_axes_from_normal_hardcoded(normal)
-	var right : Vector3 = axes.right
-	var down  : Vector3 = axes.down
+		var anchor = brush.tile_corners[0]
 
-	var anchor = brush.tile_corners[0]
+		var face_offset = TileEditorPlugin.wall_face_offset(brush,normal)
 
-	var face_offset = TileEditorPlugin.wall_face_offset(brush,normal)
+		var world_pts := PackedVector3Array()
 
-	var world_pts := PackedVector3Array()
+		var half := 1.0
+		var preview_offset := basis.x * half + basis.z * half
 
-	var half := 1.0
-	var preview_offset := basis.x * half + basis.z * half
+		var stamp = brush.get_tile_stamp_offsets()
+		# Fallback: single tile behavior
+		if stamp.is_empty():
+			stamp[Vector2i.ZERO] = brush.tile_coord
 
-	var stamp = brush.get_tile_stamp_offsets()
-	# Fallback: single tile behavior
-	if stamp.is_empty():
-		stamp[Vector2i.ZERO] = brush.tile_coord
+		for offset in stamp.keys():
+			var tile_coord = stamp[offset]
+			axes = TileEditorPlugin.plane_axes_from_normal_hardcoded(normal)
+			right = axes.right
+			down  = axes.down
+			var stamp_origin := TileEditorPlugin.get_stamp_origin(snapped, brush, normal)
 
-	for offset in stamp.keys():
-		var tile_coord = stamp[offset]
-		axes = TileEditorPlugin.plane_axes_from_normal_hardcoded(normal)
-		right = axes.right
-		down  = axes.down
-		var stamp_origin := TileEditorPlugin.get_stamp_origin(snapped, brush, normal)
+			var place_pos = stamp_origin + right * offset.x + down  * offset.y
+			for c in brush.tile_corners:
+				var u = ((c.x - anchor.x) / brush.tile_size.x)
+				var v = ((c.y - anchor.y) / brush.tile_size.y)
 
-		var place_pos = stamp_origin + right * offset.x + down  * offset.y
-		for c in brush.tile_corners:
-			var u = ((c.x - anchor.x) / brush.tile_size.x)
-			var v = ((c.y - anchor.y) / brush.tile_size.y)
+				world_pts.append(
+					(right * u) + (down * v) + place_pos)
 
-			world_pts.append(
-				(right * u) + (down * v) + place_pos)
-
-	var quad_mesh:ImmediateMesh = build_preview_quad_from_points(brush,world_pts, normal)
-	update_preview_material(brush)
-	gizmo.add_mesh(quad_mesh, preview_material)
+		var quad_mesh:ImmediateMesh = build_preview_quad_from_points(brush,world_pts, normal)
+		update_preview_material(brush)
+		gizmo.add_mesh(quad_mesh, preview_material)
 
 
 func get_selected_tile_uv_data(brush: TileModeller):
@@ -389,13 +390,16 @@ func update_preview_material(brush: TileModeller):
 		return
 
 	preview_material.albedo_texture = uv_data.texture
-	preview_material.albedo_color = Color(1, 1, 1, .5)
+	preview_material.albedo_color = Color(5, 8, 5, .5)
+
+	preview_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	preview_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	preview_material.blend_mode = BaseMaterial3D.BLEND_MODE_PREMULT_ALPHA
+	preview_material.blend_mode = BaseMaterial3D.BLEND_MODE_MIX
+
 	preview_material.albedo_texture_force_srgb = true
 	preview_material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
 	preview_material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	preview_material.texture_filter =BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	preview_material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 
 
 

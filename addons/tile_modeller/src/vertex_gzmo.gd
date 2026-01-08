@@ -40,8 +40,8 @@ var handle_mesh := SphereMesh.new()
 
 func _init():
 
-	handle_mesh.height = .05
-	handle_mesh.radius = .025
+	handle_mesh.height = .01
+	handle_mesh.radius = .005
 	create_material("main", Color(0, 1, 0), false, true)
 	var mat := StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
@@ -53,11 +53,13 @@ func _init():
 
 func _make_handle_material(color:Color) -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.blend_mode = BaseMaterial3D.BLEND_MODE_MIX
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	mat.albedo_color = color
 	mat.depth_test = BaseMaterial3D.DEPTH_TEST_DEFAULT
 	mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_OPAQUE_ONLY
 	mat.billboard_mode = BaseMaterial3D.BILLBOARD_ENABLED
+	mat.fixed_size = true
 	return mat
 
 func _redraw(gizmo: EditorNode3DGizmo) -> void:
@@ -80,8 +82,8 @@ func _draw_vertex_handles(gizmo, node):
 	var node3d = gizmo.get_node_3d().brush_form as BrushForm
 	var vertexHandles = PackedVector3Array()
 	var vertexHandlesIds = PackedInt32Array()
-	var mat := _make_handle_material(Color(0,1,0))
-	var mat2 := _make_handle_material(Color(1,0,0))
+	var mat := _make_handle_material(Color(0,1,.5,.5))
+	var mat2 := _make_handle_material(Color(1,.5,0,.5))
 	for i in node3d.positions.size():
 		var xf := Transform3D.IDENTITY
 		xf.origin = node3d.positions[i]
