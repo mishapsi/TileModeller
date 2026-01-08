@@ -395,9 +395,10 @@ func get_custom_quad(
 	viewport_camera: Camera3D,
 	event: InputEvent,
 	brush: TileModeller
-) -> Array:
+) -> PackedVector3Array:
 	if event is not InputEventMouse:
-		return []
+		return PackedVector3Array()
+
 	var mouse_pos = event.position
 	var ray_origin := viewport_camera.project_ray_origin(mouse_pos)
 	var ray_dir := viewport_camera.project_ray_normal(mouse_pos)
@@ -407,7 +408,7 @@ func get_custom_quad(
 
 	var hit := plane.intersects_ray(ray_origin, ray_dir)
 	if hit == null:
-		return []
+		return PackedVector3Array()
 
 	var normal := plane.normal.normalized()
 
@@ -416,46 +417,40 @@ func get_custom_quad(
 		viewport_camera,
 		normal,
 		cursor.global_position,
-		Vector2(brush.vertex_snap, brush.vertex_snap)/ Vector2(brush.brush_form.pixels_to_world_unit,brush.brush_form.pixels_to_world_unit)
+		Vector2(
+			brush.vertex_snap,
+			brush.vertex_snap
+		) / Vector2(
+			brush.brush_form.pixels_to_world_unit,
+			brush.brush_form.pixels_to_world_unit
+		)
 	)
-
-	var cell := Vector3i(
-		floor(snapped.x),
-		floor(snapped.y),
-		floor(snapped.z)
-	)
-
-	var bf = brush.brush_form
-
-	var basis := basis_from_plane(normal, brush.orientation)
 
 	var axes := plane_axes_from_normal_hardcoded(normal)
-	var right : Vector3 = axes.right
-	var down  : Vector3 = axes.down
-	var xo = brush.tile_size.x * (float(brush.tile_size.x) / float(brush.brush_form.pixels_to_world_unit))
-	var yo = brush.tile_size.y * (float(brush.tile_size.y) / float(brush.brush_form.pixels_to_world_unit))
-	var anchor_offset = [
-		Vector2(0,0),
-		Vector2(xo,0),
-		Vector2(xo,yo),
-		Vector2(0,xo),
-	]
-	var anchor =  brush.tile_corners[0] - anchor_offset[brush.orientation]
+	var right : Vector3 = axes.right.normalized()
+	var down  : Vector3 = axes.down.normalized()
+
+	var face_offset := wall_face_offset(brush, normal)
+	var pixel_to_world := 1.0 / brush.brush_form.pixels_to_world_unit
+
+	if brush.tile_corners.size() < 4:
+		return PackedVector3Array()
+
+	var origin_uv : Vector2 = brush.tile_corners[0]
 
 	var world_pts := PackedVector3Array()
-	var face_offset := wall_face_offset(brush, normal)
+
 	for c in brush.tile_corners:
-		var u = (c.x - anchor.x) / brush.tile_size.x
-		var v = (c.y - anchor.y) / brush.tile_size.y
-		
+		var local_px : Vector2 = c - origin_uv
+		var world_offset = right * (local_px.x * pixel_to_world) + down  * (local_px.y * pixel_to_world)
+
 		world_pts.append(
 			snapped
 			+ face_offset
-			+ right * u
-			+ down  * v
+			+ world_offset
 		)
-	return world_pts
 
+	return world_pts
 
 func _try_stamp_custom_quad(
 	viewport_camera: Camera3D,
