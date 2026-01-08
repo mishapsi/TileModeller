@@ -281,6 +281,7 @@ func build_preview_quad_from_points(
 	var mesh := ImmediateMesh.new()
 
 	var pts := points
+
 	var tile_size := Vector2(brush.tile_size)
 
 	var orientation := brush.orientation
@@ -288,7 +289,8 @@ func build_preview_quad_from_points(
 		orientation = 0
 	if brush.select_mode == TileModeller.TileSelectMode.CORNERS:
 		pts = custom_quad_points
-
+	if pts.is_empty():
+		return mesh
 	var angle := deg_to_rad(orientation * 90.0)
 	var pivot := pts[0]
 	var local_axis := normal

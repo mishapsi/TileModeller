@@ -61,7 +61,10 @@ func _forward_3d_gui_input(
 
 	if brush == null:
 		return 0
-
+	if event is InputEventKey and event.keycode == KEY_R and event.pressed and !event.echo:
+		brush.orientation = int(fmod(brush.orientation + 1, 4))
+		get_editor_interface().get_editor_viewport_3d(0).get_parent().accept_event()
+		return 0
 	if brush.select_mode == TileModeller.TileSelectMode.TILES:
 		if node is TileModeller and node.tool_mode == TileModeller.TOOL_MODE.TILE:
 			return _paint_tiles(event,selection,viewport_camera, brush)
@@ -199,9 +202,7 @@ static func get_normal_axis_enum(normal: Vector3) -> AxisDir:
 
 
 func _paint_custom_quad(event, selection, viewport_camera: Camera3D, brush: TileModeller, quad_points:Array) -> int:
-	if event is InputEventKey and event.keycode == KEY_R and event.pressed and !event.echo:
-		brush.orientation = int(fmod(brush.orientation + 1, 4))
-		return 2
+
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
 			_paint_selection = selection.get_selected_nodes().duplicate()
@@ -435,21 +436,28 @@ func get_custom_quad(
 
 	if brush.tile_corners.size() < 4:
 		return PackedVector3Array()
-	var c0 : Vector2 = brush.tile_corners[0]
-	var c1 : Vector2 = brush.tile_corners[1]
-	var c3 : Vector2 = brush.tile_corners[3]
+	var corners := brush.tile_corners
+	var origin = corners[0]
 
-	var width_px  := (c1 - c0).length()
-	var height_px := (c3 - c0).length()
-	var anchor_offset_px := [
-		Vector2(0, 0),                 # 0°
-		Vector2(width_px, 0),          # 90°
-		Vector2(width_px, height_px),  # 180°
-		Vector2(0, height_px),         # 270°
-	]
+	var min_uv := Vector2(INF, INF)
 
-	var origin_uv : Vector2 = brush.tile_corners[0] - anchor_offset_px[brush.orientation]
+	for c in corners:
+		var local = c - origin
+		var rotated : Vector2
+		match brush.orientation & 3:
+			0:
+				rotated = local
+			1:
+				rotated = Vector2(-local.y, local.x)
+			2:
+				rotated = Vector2(-local.x, -local.y)
+			3:
+				rotated = Vector2(local.y, -local.x)
 
+		min_uv.x = min(min_uv.x, rotated.x)
+		min_uv.y = min(min_uv.y, rotated.y)
+
+	var origin_uv = origin + min_uv
 
 	var world_pts := PackedVector3Array()
 
@@ -540,9 +548,6 @@ static func get_stamp_origin(
 	)
 
 func _paint_tiles(event,selection,viewport_camera,brush):
-	if event is InputEventKey and event.keycode == KEY_R and event.pressed and !event.echo:
-		brush.orientation = int(fmod(brush.orientation + 1, 4))
-		return 2
 
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
