@@ -3,6 +3,7 @@ extends EditorNode3DGizmoPlugin
 var preview_material := StandardMaterial3D.new()
 var major_grid_material := StandardMaterial3D.new()
 var minor_grid_material := StandardMaterial3D.new()
+var custom_quad_points:Array
 
 func _init():
 	major_grid_material.albedo_color = Color(0.2, 0.8, 1.0, 1.0)
@@ -13,6 +14,11 @@ func _init():
 	minor_grid_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	minor_grid_material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
 
+	preview_material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	preview_material.albedo_color = Color(0, 1, 0, .35)
+	preview_material.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+	preview_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	preview_material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
 		
 func create_minor_grid(
 	normal: Vector3,
@@ -187,11 +193,11 @@ func _redraw(gizmo: EditorNode3DGizmo):
 			world_pts.append(
 				(right * u) + (down * v) + place_pos)
 
-	var quad_mesh := build_preview_quad_from_points(brush,world_pts, normal)
+	var quad_mesh:ImmediateMesh = build_preview_quad_from_points(brush,world_pts, normal)
 
-	var mat := get_preview_material(brush)
 
-	gizmo.add_mesh(quad_mesh, mat)
+
+	gizmo.add_mesh(quad_mesh, preview_material)
 
 
 
@@ -200,38 +206,54 @@ func build_preview_quad_from_points(
 	points: PackedVector3Array,
 	normal: Vector3
 ) -> Mesh:
-	var tile_size = Vector2(brush.tile_size)
-	var orientation = brush.orientation # 0..3
+	var mesh := ImmediateMesh.new()
+
+	# ─── Copy points so redraws stay stable ───
+	var pts := points
+
+	var tile_size := Vector2(brush.tile_size)
+	var orientation := brush.orientation
 	if brush.select_mode == TileModeller.TileSelectMode.TILES:
 		orientation = 0
-	var angle := deg_to_rad((orientation) * 90.0)
-	var pivot := points[0]
-	var local_axis := normal   # ⬅️ this is the fix
-	var current_size = points[0].distance_to(points[1])
-	var target_size = brush.brush_form.get_quad_size(tile_size.x*current_size)
+	if brush.select_mode == TileModeller.TileSelectMode.CORNERS:
+		pts = custom_quad_points
+	var angle := deg_to_rad(orientation * 90.0)
+	var pivot := pts[0]
+	var local_axis := normal
+
+	# Scale to match brush quad size
+	var current_size := pts[0].distance_to(pts[1])
+	var target_size = brush.brush_form.get_quad_size(tile_size.x * current_size)
 	var scale = target_size / current_size
 
-	for i in range(points.size()):
-		var p := points[i] - pivot
+	for i in range(pts.size()):
+		var p := pts[i] - pivot
 		p *= scale
 		p = p.rotated(local_axis, angle)
+		pts[i] = pivot + p
 
-		points[i] = pivot + p
-	var st := SurfaceTool.new()
-	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	st.set_normal(normal)
+	# ─── Build mesh ───
+	mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
 
 	# Triangle 1
-	st.add_vertex(points[0])
-	st.add_vertex(points[1])
-	st.add_vertex(points[2])
+	mesh.surface_set_normal(normal)
+	mesh.surface_add_vertex(pts[0])
+	mesh.surface_set_normal(normal)
+	mesh.surface_add_vertex(pts[1])
+	mesh.surface_set_normal(normal)
+	mesh.surface_add_vertex(pts[2])
 
 	# Triangle 2
-	st.add_vertex(points[2])
-	st.add_vertex(points[3])
-	st.add_vertex(points[0])
+	mesh.surface_set_normal(normal)
+	mesh.surface_add_vertex(pts[2])
+	mesh.surface_set_normal(normal)
+	mesh.surface_add_vertex(pts[3])
+	mesh.surface_set_normal(normal)
+	mesh.surface_add_vertex(pts[0])
 
-	return st.commit()
+	mesh.surface_end()
+	return mesh
+
 
 
 enum AxisDir { X_POS, X_NEG, Y_POS, Y_NEG, Z_POS, Z_NEG }

@@ -1,6 +1,9 @@
 @tool
 extends EditorPlugin
 class_name TileEditorPlugin
+
+enum AxisDir { X_POS, X_NEG, Y_POS, Y_NEG, Z_POS, Z_NEG }
+
 const TOOLBAR = preload("uid://cogsqfaa3p3rw")
 var toolbar = TOOLBAR.instantiate()
 const PlaneGZMscr = preload("uid://bfhag4hutu00u")
@@ -17,6 +20,7 @@ var brush:TileModeller
 var _drag_painting := false
 var _last_stamp_cell : Vector3i = Vector3i(999999, 999999, 999999)
 var _paint_selection: Array[Node] = []
+var custom_quad_points
 
 func _enter_tree():
 	add_custom_type("TileModeller",
@@ -141,13 +145,11 @@ static func basis_from_plane(normal: Vector3, orientation: int) -> Basis:
 	var down  := rotated[1]
 
 	var b := Basis()
-	b.x = right        # local +X
-	b.y = normal       # local +Y (surface normal)
-	b.z = down         # local +Z
-
+	b.x = right
+	b.y = normal     
+	b.z = down       
 	return b
 
-enum AxisDir { X_POS, X_NEG, Y_POS, Y_NEG, Z_POS, Z_NEG }
 
 static func get_normal_axis_enum(normal: Vector3) -> AxisDir:
 	normal = normal.normalized()
@@ -184,19 +186,17 @@ func _forward_3d_gui_input(
 			return _paint_tiles(event,selection,viewport_camera, brush)
 	if brush.select_mode == TileModeller.TileSelectMode.CORNERS:
 		if node is TileModeller and node.tool_mode == TileModeller.TOOL_MODE.TILE:
-			return _paint_custom_quad(event,selection,viewport_camera,brush)
+			var quad_points = get_custom_quad(viewport_camera,event, brush)
+			planeGZM.custom_quad_points = quad_points
+			return _paint_custom_quad(event,selection,viewport_camera,brush, quad_points)
 	return 0
 
-func _paint_custom_quad(event, selection, viewport_camera: Camera3D, brush: TileModeller) -> int:
+func _paint_custom_quad(event, selection, viewport_camera: Camera3D, brush: TileModeller, quad_points:Array) -> int:
 	if vertexGZM.is_dragging():
 		return 0
-
-	# Rotate brush
 	if event is InputEventKey and event.keycode == KEY_R and event.pressed and !event.echo:
 		brush.orientation = int(fmod(brush.orientation + 1, 4))
 		return 2
-
-	# Mouse press
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
 			_paint_selection = selection.get_selected_nodes().duplicate()
@@ -207,7 +207,7 @@ func _paint_custom_quad(event, selection, viewport_camera: Camera3D, brush: Tile
 			if bf:
 				bf.begin_quad_paint()
 
-			_try_stamp_custom_quad(viewport_camera, event.position, brush)
+			_try_stamp_custom_quad(viewport_camera, event.position, brush, quad_points)
 			_restore_paint_selection()
 			return 2
 		else:
@@ -222,7 +222,7 @@ func _paint_custom_quad(event, selection, viewport_camera: Camera3D, brush: Tile
 
 	# Dragging
 	if event is InputEventMouseMotion and _drag_painting and event.button_mask == MOUSE_BUTTON_LEFT:
-		_try_stamp_custom_quad(viewport_camera, event.position, brush)
+		_try_stamp_custom_quad(viewport_camera, event.position, brush, quad_points)
 		_restore_paint_selection()
 		return 2
 
@@ -231,11 +231,8 @@ func _paint_custom_quad(event, selection, viewport_camera: Camera3D, brush: Tile
 static func wall_face_offset(brush, normal: Vector3) -> Vector3:
 	normal = normal.normalized()
 	var value = Vector2(brush.vertex_snap, brush.vertex_snap)/ Vector2(brush.brush_form.pixels_to_world_unit,brush.brush_form.pixels_to_world_unit)
-	# Floor / ceiling
 	if abs(normal.y) > 0.99:
 		return Vector3.ZERO
-
-	# +X wall
 	if normal.x > 0.9:
 		return Vector3(0, value.y, 0)
 
@@ -258,20 +255,13 @@ static func wall_face_offset2(normal,right, down,brush:TileModeller):
 	var size = float(brush.tile_size.x)/float(brush.brush_form.pixels_to_world_unit)
 	if abs(normal.y) > 0.99:
 		return right * size + down * size
-
-	# +X wall
 	if normal.x > 0.9:
 		return right* size
-	# -X wall
 	if normal.x < -0.9:
-		print("x")
 		return down* size
-	# +Z wall
 	if normal.z > 0.9:
 		return right* size
-	# -Z wall
 	if normal.z < -0.9:
-		print("z")
 		return down* size
 
 	return Vector3.ZERO
@@ -323,7 +313,6 @@ func _try_stamp_at_mouse(
 	mouse_pos: Vector2,
 	brush: TileModeller
 ) -> void:
-	# Ignore if hovering gizmo
 
 	if _is_over_brushform_handle(viewport_camera, mouse_pos, brush):
 		return
@@ -348,7 +337,6 @@ func _try_stamp_at_mouse(
 		Vector2(brush.vertex_snap, brush.vertex_snap)/ Vector2(brush.brush_form.pixels_to_world_unit,brush.brush_form.pixels_to_world_unit)
 	)
 
-	# Convert to grid cell (prevents double stamping)
 	var cell := Vector3i(
 		floor(snapped.x),
 		floor(snapped.y),
@@ -360,17 +348,12 @@ func _try_stamp_at_mouse(
 
 	_last_stamp_cell = cell
 
-	# Find or create BrushForm
 	var bf: BrushForm = brush.brush_form
 
 	var basis := basis_from_plane(plane.normal,orientation_from_normal(normal))
 
-	#var half = 1.0
-	#var preview_offset = basis.x * half + basis.z * half
-	#var face_offset := wall_face_offset(brush, normal)
 	var stamp = brush.get_tile_stamp_offsets()
 
-	# Fallback: single tile behavior
 	if stamp.is_empty():
 		stamp[Vector2i.ZERO] = brush.tile_coord
 	var stamp_origin := get_stamp_origin(snapped, brush, normal)
@@ -403,13 +386,76 @@ func _try_stamp_at_mouse(
 		focus_point
 	)
 
+func get_custom_quad(
+	viewport_camera: Camera3D,
+	event: InputEvent,
+	brush: TileModeller
+) -> Array:
+	if event is not InputEventMouse:
+		return []
+	var mouse_pos = event.position
+	var ray_origin := viewport_camera.project_ray_origin(mouse_pos)
+	var ray_dir := viewport_camera.project_ray_normal(mouse_pos)
+
+	var cursor := brush.cursor
+	var plane := get_axis_aligned_plane(viewport_camera, cursor.global_position)
+
+	var hit := plane.intersects_ray(ray_origin, ray_dir)
+	if hit == null:
+		return []
+
+	var normal := plane.normal.normalized()
+
+	var snapped := snap_point_to_plane_grid(
+		hit,
+		viewport_camera,
+		normal,
+		cursor.global_position,
+		Vector2(brush.vertex_snap, brush.vertex_snap)/ Vector2(brush.brush_form.pixels_to_world_unit,brush.brush_form.pixels_to_world_unit)
+	)
+
+	var cell := Vector3i(
+		floor(snapped.x),
+		floor(snapped.y),
+		floor(snapped.z)
+	)
+
+	var bf = brush.brush_form
+
+	var basis := basis_from_plane(normal, brush.orientation)
+
+	var axes := plane_axes_from_normal_hardcoded(normal)
+	var right : Vector3 = axes.right
+	var down  : Vector3 = axes.down
+	var anchor_offset = [
+		Vector2(0,0),
+		Vector2(brush.tile_size.x,0),
+		Vector2(brush.tile_size.x,brush.tile_size.y),
+		Vector2(0,brush.tile_size.y),
+	]
+	var anchor =  brush.tile_corners[0] - anchor_offset[brush.orientation]
+
+	var world_pts := PackedVector3Array()
+	var face_offset := wall_face_offset(brush, normal)
+	for c in brush.tile_corners:
+		var u = (c.x - anchor.x) / brush.tile_size.x
+		var v = (c.y - anchor.y) / brush.tile_size.y
+		
+		world_pts.append(
+			snapped
+			+ face_offset
+			+ right * u
+			+ down  * v
+		)
+	return world_pts
+
 
 func _try_stamp_custom_quad(
 	viewport_camera: Camera3D,
 	mouse_pos: Vector2,
-	brush: TileModeller
+	brush: TileModeller,
+	quad_points:Array
 ) -> void:
-	# Ignore gizmo interaction
 	if _is_over_brushform_handle(viewport_camera, mouse_pos, brush):
 		return
 
@@ -433,7 +479,6 @@ func _try_stamp_custom_quad(
 		Vector2(brush.vertex_snap, brush.vertex_snap)/ Vector2(brush.brush_form.pixels_to_world_unit,brush.brush_form.pixels_to_world_unit)
 	)
 
-	# Prevent double stamping
 	var cell := Vector3i(
 		floor(snapped.x),
 		floor(snapped.y),
@@ -443,36 +488,12 @@ func _try_stamp_custom_quad(
 		return
 	_last_stamp_cell = cell
 
-	# Find or create BrushForm
 	var bf = brush.brush_form
 
-	# Build transform (EXACT same basis as tiles)
-	# Build transform (still needed for UVs / normals consistency)
 	var basis := basis_from_plane(normal, brush.orientation)
 
-	var axes := plane_axes_from_normal_hardcoded(normal)
-	var right : Vector3 = axes.right
-	var down  : Vector3 = axes.down
-
-	# 🔑 Anchor is EXPLICITLY the first corner
-	var anchor = brush.tile_corners[0]
-
-	var world_pts := PackedVector3Array()
-	var face_offset := wall_face_offset(brush, normal)
-	for c in brush.tile_corners:
-		var u = (c.x - anchor.x) / brush.tile_size.x
-		var v = (c.y - anchor.y) / brush.tile_size.y
-		
-		world_pts.append(
-			snapped
-			+ face_offset
-			+ right * u
-			+ down  * v
-		)
-
-	# Paint quad
 	bf.place_custom_quad_undoable(
-		world_pts,
+		quad_points,
 		normal,
 		basis,
 		brush.active_tileset_source_id,
