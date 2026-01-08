@@ -432,11 +432,13 @@ func get_custom_quad(
 	var axes := plane_axes_from_normal_hardcoded(normal)
 	var right : Vector3 = axes.right
 	var down  : Vector3 = axes.down
+	var xo = brush.tile_size.x * (float(brush.tile_size.x) / float(brush.brush_form.pixels_to_world_unit))
+	var yo = brush.tile_size.y * (float(brush.tile_size.y) / float(brush.brush_form.pixels_to_world_unit))
 	var anchor_offset = [
 		Vector2(0,0),
-		Vector2(brush.tile_size.x,0),
-		Vector2(brush.tile_size.x,brush.tile_size.y),
-		Vector2(0,brush.tile_size.y),
+		Vector2(xo,0),
+		Vector2(xo,yo),
+		Vector2(0,xo),
 	]
 	var anchor =  brush.tile_corners[0] - anchor_offset[brush.orientation]
 
