@@ -199,8 +199,6 @@ static func get_normal_axis_enum(normal: Vector3) -> AxisDir:
 
 
 func _paint_custom_quad(event, selection, viewport_camera: Camera3D, brush: TileModeller, quad_points:Array) -> int:
-	if vertexGZM.is_dragging():
-		return 0
 	if event is InputEventKey and event.keycode == KEY_R and event.pressed and !event.echo:
 		brush.orientation = int(fmod(brush.orientation + 1, 4))
 		return 2
@@ -463,6 +461,7 @@ func _try_stamp_custom_quad(
 	brush: TileModeller,
 	quad_points:Array
 ) -> void:
+
 	if _is_over_brushform_handle(viewport_camera, mouse_pos, brush):
 		return
 
@@ -531,15 +530,10 @@ static func get_stamp_origin(
 	)
 
 func _paint_tiles(event,selection,viewport_camera,brush):
-	if vertexGZM.is_dragging():
-		return 0
-	# Rotate brush
 	if event is InputEventKey and event.keycode == KEY_R and event.pressed and !event.echo:
 		brush.orientation = int(fmod(brush.orientation + 1, 4))
 		return 2
 
-	# Mouse button pressed
-	# Mouse button pressed / released
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
 			_paint_selection = selection.get_selected_nodes().duplicate()
@@ -562,8 +556,6 @@ func _paint_tiles(event,selection,viewport_camera,brush):
 			_restore_paint_selection()
 			return 2
 
-
-	# Mouse motion while dragging
 	if event is InputEventMouseMotion and _drag_painting and event.button_mask == MOUSE_BUTTON_LEFT:
 		_try_stamp_at_mouse(viewport_camera, event.position, brush)
 		_restore_paint_selection()
