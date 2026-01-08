@@ -41,6 +41,40 @@ func _ready() -> void:
 	toolbar.vertex_color_changed.connect(_on_vertex_color_changed)
 	toolbar.vertex_snap_changed.connect(_on_vertex_snap_changed)
 	toolbar.rotate_tile.connect(_on_rotate_tile)
+	toolbar.export_mesh.connect(_on_export_mesh)
+
+
+func _forward_3d_gui_input(
+	viewport_camera: Camera3D,
+	event: InputEvent
+) -> int:
+
+	var selection := get_editor_interface().get_selection()
+	var selected := selection.get_selected_nodes()
+	if selected.is_empty():
+		return 0
+
+	var brush: TileModeller = null
+	var node := selected[0]
+	if node is TileModeller:
+		brush = node
+
+	if brush == null:
+		return 0
+
+	if brush.select_mode == TileModeller.TileSelectMode.TILES:
+		if node is TileModeller and node.tool_mode == TileModeller.TOOL_MODE.TILE:
+			return _paint_tiles(event,selection,viewport_camera, brush)
+	if brush.select_mode == TileModeller.TileSelectMode.CORNERS:
+		if node is TileModeller and node.tool_mode == TileModeller.TOOL_MODE.TILE:
+			var quad_points = get_custom_quad(viewport_camera,event, brush)
+			planeGZM.custom_quad_points = quad_points
+			return _paint_custom_quad(event,selection,viewport_camera,brush, quad_points)
+	return 0
+
+func _on_export_mesh():
+	if brush:
+		brush.export_mesh()
 
 func _on_rotate_tile():
 	if brush:
@@ -163,33 +197,6 @@ static func get_normal_axis_enum(normal: Vector3) -> AxisDir:
 	else:
 		return AxisDir.Z_POS if normal.z > 0.0 else AxisDir.Z_NEG
 
-func _forward_3d_gui_input(
-	viewport_camera: Camera3D,
-	event: InputEvent
-) -> int:
-
-	var selection := get_editor_interface().get_selection()
-	var selected := selection.get_selected_nodes()
-	if selected.is_empty():
-		return 0
-
-	var brush: TileModeller = null
-	var node := selected[0]
-	if node is TileModeller:
-		brush = node
-
-	if brush == null:
-		return 0
-
-	if brush.select_mode == TileModeller.TileSelectMode.TILES:
-		if node is TileModeller and node.tool_mode == TileModeller.TOOL_MODE.TILE:
-			return _paint_tiles(event,selection,viewport_camera, brush)
-	if brush.select_mode == TileModeller.TileSelectMode.CORNERS:
-		if node is TileModeller and node.tool_mode == TileModeller.TOOL_MODE.TILE:
-			var quad_points = get_custom_quad(viewport_camera,event, brush)
-			planeGZM.custom_quad_points = quad_points
-			return _paint_custom_quad(event,selection,viewport_camera,brush, quad_points)
-	return 0
 
 func _paint_custom_quad(event, selection, viewport_camera: Camera3D, brush: TileModeller, quad_points:Array) -> int:
 	if vertexGZM.is_dragging():
@@ -538,7 +545,6 @@ func _paint_tiles(event,selection,viewport_camera,brush):
 			_paint_selection = selection.get_selected_nodes().duplicate()
 			_drag_painting = true
 			_last_stamp_cell = Vector3i(999999, 999999, 999999)
-
 			var bf = brush.brush_form
 			if bf:
 				bf.begin_quad_paint()
@@ -562,6 +568,7 @@ func _paint_tiles(event,selection,viewport_camera,brush):
 		_try_stamp_at_mouse(viewport_camera, event.position, brush)
 		_restore_paint_selection()
 		return 2
+
 	return 0
 
 func _restore_paint_selection() -> void:

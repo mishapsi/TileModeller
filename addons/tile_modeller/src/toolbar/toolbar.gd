@@ -5,6 +5,7 @@ signal tool_mode_selected(mode:TileModeller.TOOL_MODE)
 signal vertex_color_changed(color)
 signal vertex_snap_changed(amount)
 signal rotate_tile
+signal export_mesh
 func _ready() -> void:
 	visible = false
 
@@ -38,3 +39,7 @@ func set_brush_values(brush:TileModeller):
 
 func _on_rotate_tile_pressed() -> void:
 	rotate_tile.emit()
+
+
+func _on_export_mesh_pressed() -> void:
+	export_mesh.emit()

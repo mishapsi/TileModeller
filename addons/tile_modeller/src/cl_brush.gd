@@ -182,7 +182,7 @@ func recalculate_normals(
 			normals[idx] = sum
 func create_mesh_from_forms() -> void:
 	RenderingServer.mesh_clear(base)
-
+	_surface_materials.clear()
 	var forms := get_brush_forms()
 	var surfaces_total := 0
 
@@ -300,7 +300,7 @@ func create_mesh_from_forms() -> void:
 				surfaces_total,
 				material
 			)
-
+			_surface_materials.append(material)
 			surfaces_total += 1
 
 
@@ -346,3 +346,32 @@ func _enter_tree():
 func _exit_tree():
 	RenderingServer.free_rid(instance)
 	RenderingServer.free_rid(base)
+
+func export_mesh() -> void:
+	if !base:
+		push_warning("No mesh to export.")
+		return
+
+	var array_mesh := ArrayMesh.new()
+	var surface_count := RenderingServer.mesh_get_surface_count(base)
+
+	for s in range(surface_count):
+		var arrays := RenderingServer.mesh_surface_get_arrays(base, s)
+		if arrays.is_empty():
+			continue
+
+		array_mesh.add_surface_from_arrays(
+			Mesh.PRIMITIVE_TRIANGLES,
+			arrays
+		)
+		# Materials MUST be assigned from known references
+		if s < _surface_materials.size():
+			array_mesh.surface_set_material(s, _surface_materials[s])
+
+	var mi := MeshInstance3D.new()
+	mi.mesh = array_mesh
+	mi.transform = transform
+	mi.name = "%s_Mesh" % name
+
+	get_parent().add_child(mi)
+	mi.owner = owner
