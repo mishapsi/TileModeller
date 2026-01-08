@@ -435,8 +435,21 @@ func get_custom_quad(
 
 	if brush.tile_corners.size() < 4:
 		return PackedVector3Array()
+	var c0 : Vector2 = brush.tile_corners[0]
+	var c1 : Vector2 = brush.tile_corners[1]
+	var c3 : Vector2 = brush.tile_corners[3]
 
-	var origin_uv : Vector2 = brush.tile_corners[0]
+	var width_px  := (c1 - c0).length()
+	var height_px := (c3 - c0).length()
+	var anchor_offset_px := [
+		Vector2(0, 0),                 # 0°
+		Vector2(width_px, 0),          # 90°
+		Vector2(width_px, height_px),  # 180°
+		Vector2(0, height_px),         # 270°
+	]
+
+	var origin_uv : Vector2 = brush.tile_corners[0] - anchor_offset_px[brush.orientation]
+
 
 	var world_pts := PackedVector3Array()
 
