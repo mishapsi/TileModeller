@@ -745,10 +745,8 @@ func _get_best_quad_edge_from_mouse(
 			best_edge = i
 	if best_edge == -1:
 		return {}
-
-	var i0 := (best_edge + 2) % 4
+	var i0 := (best_edge+1) % 4
 	var i1 := (i0 + 1) % 4
-
 	return {
 		"normal": normal_world,
 		"right": right,
@@ -901,9 +899,8 @@ func _draw_texel_split_axis_line(gizmo: EditorNode3DGizmo, brush: TileModeller) 
 	var step := texel_uv_y if active_split_axis == "horizontal" else texel_uv_x
 	var inner_min := dmin + step
 	var inner_max := dmax - step
-	if inner_max <= inner_min + 1e-9:
-		return
-
+	#if inner_max <= inner_min + 1e-9:
+		#return
 	texel_coord = clamp(texel_coord, inner_min, inner_max)
 	texel_coord = round(texel_coord / step) * step
 	texel_coord = clamp(texel_coord, inner_min, inner_max)
