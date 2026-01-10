@@ -6,6 +6,7 @@ signal vertex_color_changed(color)
 signal vertex_snap_changed(amount)
 signal rotate_tile
 signal export_mesh
+signal quad_texel_split_changed
 func _ready() -> void:
 	visible = false
 
@@ -14,17 +15,29 @@ func _on_tile_paint_pressed() -> void:
 	%TileOrientation.visible = true
 	%VertexSnap.visible = true
 	%VertexColor.visible = false
+	%QuadSplitOptions.visible = false
 
 func _on_vertex_mode_pressed() -> void:
 	tool_mode_selected.emit(TileModeller.TOOL_MODE.MOVE_VERTEX)
 	%TileOrientation.visible = false
 	%VertexSnap.visible = true
 	%VertexColor.visible = false
+	%QuadSplitOptions.visible = false
+
 func _on_paint_vertex_pressed() -> void:
 	tool_mode_selected.emit(TileModeller.TOOL_MODE.PAINT_VERTEX)
 	%TileOrientation.visible = false
 	%VertexSnap.visible = false
 	%VertexColor.visible = true
+	%QuadSplitOptions.visible = false
+
+func _on_quad_split_pressed() -> void:
+	tool_mode_selected.emit(TileModeller.TOOL_MODE.QUAD_SPLIT)
+	%TileOrientation.visible = false
+	%VertexSnap.visible = false
+	%VertexColor.visible = false
+	%QuadSplitOptions.visible = true
+
 
 func _on_color_picker_button_color_changed(color: Color) -> void:
 	vertex_color_changed.emit(color)
@@ -35,11 +48,14 @@ func _on_spin_box_value_changed(value: float) -> void:
 func set_brush_values(brush:TileModeller):
 	%VertexSnapSpinBox.value = brush.vertex_snap
 	%VertexColorButton.color = brush.vertex_color
-
+	%TexelButton.pressed = brush.quad_texel_split
 
 func _on_rotate_tile_pressed() -> void:
 	rotate_tile.emit()
 
-
 func _on_export_mesh_pressed() -> void:
 	export_mesh.emit()
+
+
+func _on_texel_button_toggled(toggled_on: bool) -> void:
+	quad_texel_split_changed.emit(toggled_on)

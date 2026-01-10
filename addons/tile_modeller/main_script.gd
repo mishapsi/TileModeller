@@ -42,7 +42,13 @@ func _ready() -> void:
 	toolbar.vertex_snap_changed.connect(_on_vertex_snap_changed)
 	toolbar.rotate_tile.connect(_on_rotate_tile)
 	toolbar.export_mesh.connect(_on_export_mesh)
+	toolbar.quad_texel_split_changed.connect(_on_quad_texel_split_changed)
+	vertexGZM.quad_split_requested.connect(_on_quad_split_requested)
+	vertexGZM.quad_texel_split_requested.connect(_on_quad_texel_split_requested)
 
+func _on_quad_texel_split_changed(value:bool):
+	if brush:
+		brush.quad_texel_split = value
 
 func _forward_3d_gui_input(
 	viewport_camera: Camera3D,
@@ -63,8 +69,18 @@ func _forward_3d_gui_input(
 		return 0
 	if event is InputEventKey and event.keycode == KEY_R and event.pressed and !event.echo:
 		brush.orientation = int(fmod(brush.orientation + 1, 4))
-		get_editor_interface().get_editor_viewport_3d(0).get_parent().accept_event()
+		get_viewport().set_input_as_handled()
 		return 0
+	if brush.tool_mode == TileModeller.TOOL_MODE.QUAD_SPLIT:
+		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+			if vertexGZM.active_split_quad_index != -1 and !brush.quad_texel_split:
+				vertexGZM._emit_quad_split(brush)
+				get_viewport().set_input_as_handled()
+				return 2
+			if vertexGZM.active_split_quad_index != -1 and brush.quad_texel_split:
+				vertexGZM._emit_quad_texel_split(brush)
+				get_viewport().set_input_as_handled()
+				return 2
 	if brush.select_mode == TileModeller.TileSelectMode.TILES:
 		if node is TileModeller and node.tool_mode == TileModeller.TOOL_MODE.TILE:
 			return _paint_tiles(event,selection,viewport_camera, brush)
@@ -74,6 +90,40 @@ func _forward_3d_gui_input(
 			planeGZM.custom_quad_points = quad_points
 			return _paint_custom_quad(event,selection,viewport_camera,brush, quad_points)
 	return 0
+
+func _on_quad_split_requested(
+	quad_index: int,
+	axis: String,
+	offset_world: float,
+	normal: Vector3,
+	right: Vector3,
+	down: Vector3
+) -> void:
+	brush.brush_form.split_quad(
+		quad_index,
+		axis,
+		offset_world,
+		normal,
+		right,
+		down
+	)
+
+func _on_quad_texel_split_requested(
+	quad_index: int,
+	axis: String,              
+	texel_coord: float,        
+	normal_world: Vector3,
+	right_world: Vector3,
+	down_world: Vector3
+) -> void:
+	brush.brush_form.split_quad_along_texel(
+		quad_index,
+		axis,              
+		texel_coord,        
+		normal_world,
+		right_world,
+		down_world
+	)
 
 func _on_export_mesh():
 	if brush:
@@ -91,7 +141,7 @@ func _on_vertex_color_changed(color:Color):
 	if brush:
 		brush.vertex_color = color
 
-func _on_vertex_snap_changed(amount:int):
+func _on_vertex_snap_changed(amount:float):
 	if brush:
 		brush.vertex_snap = amount
 
@@ -314,6 +364,15 @@ static func snap_point_to_plane_grid(
 
 	return plane_origin + tangent * u + bitangent * v
 
+static func _rotate_stamp_offset(offset: Vector2i, orientation: int) -> Vector2i:
+	match orientation & 3:
+		0: return offset                     # 0°
+		1: return Vector2i(-offset.y, offset.x)   # 90° CW
+		2: return Vector2i(-offset.x, -offset.y)  # 180°
+		3: return Vector2i(offset.y, -offset.x)   # 270° CW
+	return offset
+
+
 func _try_stamp_at_mouse(
 	viewport_camera: Camera3D,
 	mouse_pos: Vector2,
@@ -363,17 +422,21 @@ func _try_stamp_at_mouse(
 	if stamp.is_empty():
 		stamp[Vector2i.ZERO] = brush.tile_coord
 	var stamp_origin := get_stamp_origin(snapped, brush, normal)
+
+	var tile_step := float(brush.tile_size.x) / float(brush.brush_form.pixels_to_world_unit)
+
 	for offset in stamp.keys():
 		var tile_coord = stamp[offset]
-
 		var axes := plane_axes_from_normal_hardcoded(normal)
 		var right = axes.right
 		var down  = axes.down
+		var rot_offset := _rotate_stamp_offset(offset, brush.orientation)
 
-		
+		var place_pos =\
+			stamp_origin\
+			+ right * (rot_offset.x * tile_step)\
+			+ down  * (rot_offset.y * tile_step)
 
-		var place_pos = stamp_origin + right * (offset.x * (float(brush.tile_size.x) / float(brush.brush_form.pixels_to_world_unit))) + down  * (offset.y* (float(brush.tile_size.x) / float(brush.brush_form.pixels_to_world_unit)))
-		
 		bf.place_quad_undoable(
 			place_pos + wall_face_offset2(normal, right, down, brush),
 			normal,
@@ -384,6 +447,7 @@ func _try_stamp_at_mouse(
 			brush.tileset,
 			brush.orientation
 		)
+
 
 	cursor.global_position = stamp_origin
 	var focus_point := focus_selection_gdscript()

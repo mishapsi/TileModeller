@@ -1,12 +1,12 @@
 @tool
 class_name TileModeller extends Node3D
 
-enum TOOL_MODE {TILE, MOVE_VERTEX, PAINT_VERTEX}
+enum TOOL_MODE {TILE, MOVE_VERTEX, PAINT_VERTEX, QUAD_SPLIT}
 
 var tool_mode = TOOL_MODE.TILE
-
+var quad_texel_split = true
 var vertex_color:Color = Color.WHITE
-@onready var vertex_snap:int = 16 if !brush_form else brush_form.pixels_to_world_unit
+@onready var vertex_snap:float = 16 if !brush_form else float(brush_form.pixels_to_world_unit)
 var orientation:int = 0
 @onready var tile_corners:Array = PackedVector2Array([
 	Vector2(0, 0),
@@ -187,23 +187,20 @@ func create_mesh_from_forms() -> void:
 	var surfaces_total := 0
 
 	for form in forms:
-		var faces := form.get_quads() # tris + quads
+		var faces := form.get_quads()
 		if faces.is_empty():
 			continue
 
-		var batches := {} # source_id -> mesh data
+		var batches := {}
 
 		for face in faces:
 			if face.size() < 3:
 				continue
-
-			# --- FACE ID RESOLUTION (THIS IS THE IMPORTANT PART) ---
 			var face_key := PackedInt32Array(face)
 			face_key.sort()
 
 			var face_id := form.quad_face_id_by_key.get(face_key, -1)
 			var source_id := form.face_source_by_id.get(face_id, 0)
-			# ------------------------------------------------------
 
 			if not batches.has(source_id):
 				batches[source_id] = {
@@ -217,7 +214,6 @@ func create_mesh_from_forms() -> void:
 			var b = batches[source_id]
 			var base_index = b.positions.size()
 
-			# Emit vertices
 			for v in face:
 				b.positions.append(transform * form.positions[v])
 				b.normals.append(
@@ -230,7 +226,6 @@ func create_mesh_from_forms() -> void:
 					form.colors[v] if v < form.colors.size() else Color.WHITE
 				)
 
-			# Triangulate
 			if face.size() == 3:
 				b.indices.append_array([
 					base_index + 0,
@@ -250,7 +245,6 @@ func create_mesh_from_forms() -> void:
 						base_index + i + 1,
 					])
 
-		# Build surfaces
 		for source_id in batches.keys():
 			var b = batches[source_id]
 			if b.indices.is_empty():
@@ -364,7 +358,6 @@ func export_mesh() -> void:
 			Mesh.PRIMITIVE_TRIANGLES,
 			arrays
 		)
-		# Materials MUST be assigned from known references
 		if s < _surface_materials.size():
 			array_mesh.surface_set_material(s, _surface_materials[s])
 

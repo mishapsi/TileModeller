@@ -42,9 +42,6 @@ func create_minor_grid(
 	mesh.surface_begin(Mesh.PRIMITIVE_LINES, minor_grid_material)
 
 	for i in range(-range, range + 1):
-		# Skip major lines
-		if i % steps == 0:
-			continue
 
 		var offset := float(i) * minor
 
@@ -120,12 +117,10 @@ func _redraw(gizmo: EditorNode3DGizmo):
 	if camera == null:
 		return
 
-	# Mouse ray
 	var mouse_pos := viewport.get_mouse_position()
 	var ray_origin := camera.project_ray_origin(mouse_pos)
 	var ray_dir := camera.project_ray_normal(mouse_pos)
 
-	# Plane under cursor
 	var plane := TileEditorPlugin.get_axis_aligned_plane(camera, cursor.global_position)
 	var hit := plane.intersects_ray(ray_origin, ray_dir)
 	if hit == null:
@@ -133,7 +128,6 @@ func _redraw(gizmo: EditorNode3DGizmo):
 
 	var normal := plane.normal.normalized()
 
-	# 🔑 Same snapping logic as placement
 	var snapped := TileEditorPlugin.snap_point_to_plane_grid(
 		hit,
 		camera,
@@ -143,63 +137,195 @@ func _redraw(gizmo: EditorNode3DGizmo):
 	)
 	var base_orientation := TileEditorPlugin.orientation_index_from_normal(normal)
 	var basis := TileEditorPlugin.basis_from_plane(normal,base_orientation)
-	# ─────────────────────────────
-	# 1️⃣ Optional: large helper plane
-	# ─────────────────────────────
-	var minor := create_minor_grid(
-		normal,
-		cursor.global_position,
-		1.0,
-		0.25,
-		2
-	)
 
-	var major := create_major_grid(
-		normal,
-		cursor.global_position,
-		1.0,
-		1
-	)
+	if brush.tool_mode not in [TileModeller.TOOL_MODE.QUAD_SPLIT]:
+		var minor := create_minor_grid(
+			normal,
+			cursor.global_position,
+			1.0,
+			0.25,
+			2
+		)
 
-	gizmo.add_mesh(minor, minor_grid_material, Transform3D.IDENTITY)
-	gizmo.add_mesh(major, major_grid_material, Transform3D.IDENTITY)
-	if brush.tool_mode in [TileModeller.TOOL_MODE.TILE]:
-		var axes = TileEditorPlugin.plane_axes_from_normal_hardcoded(normal)
-		var right : Vector3 = axes.right
-		var down  : Vector3 = axes.down
+		var major := create_major_grid(
+			normal,
+			cursor.global_position,
+			1.0,
+			1
+		)
 
-		var anchor = brush.tile_corners[0]
-
-		var face_offset = TileEditorPlugin.wall_face_offset(brush,normal)
-
-		var world_pts := PackedVector3Array()
-
-		var half := 1.0
-		var preview_offset := basis.x * half + basis.z * half
-
+		gizmo.add_mesh(minor, minor_grid_material, Transform3D.IDENTITY)
+		gizmo.add_mesh(major, major_grid_material, Transform3D.IDENTITY)
+	if brush.tool_mode in [TileModeller.TOOL_MODE.TILE] and brush.select_mode == TileModeller.TileSelectMode.TILES:
 		var stamp = brush.get_tile_stamp_offsets()
-		# Fallback: single tile behavior
+
 		if stamp.is_empty():
 			stamp[Vector2i.ZERO] = brush.tile_coord
 
+		var preview_mesh := ImmediateMesh.new()
+		preview_mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
+
 		for offset in stamp.keys():
 			var tile_coord = stamp[offset]
-			axes = TileEditorPlugin.plane_axes_from_normal_hardcoded(normal)
-			right = axes.right
-			down  = axes.down
-			var stamp_origin := TileEditorPlugin.get_stamp_origin(snapped, brush, normal)
+			_append_tile_preview_quad(
+				preview_mesh,
+				brush,
+				offset,
+				tile_coord,
+				snapped,
+				normal,
+				basis
+			)
 
-			var place_pos = stamp_origin + right * offset.x + down  * offset.y
-			for c in brush.tile_corners:
-				var u = ((c.x - anchor.x) / brush.tile_size.x)
-				var v = ((c.y - anchor.y) / brush.tile_size.y)
-
-				world_pts.append(
-					(right * u) + (down * v) + place_pos)
-
-		var quad_mesh:ImmediateMesh = build_preview_quad_from_points(brush,world_pts, normal)
+		preview_mesh.surface_end()
+		update_preview_material(brush)
+		gizmo.add_mesh(preview_mesh, preview_material)
+	else:
+		var quad_mesh:ImmediateMesh = build_preview_quad_from_points(brush,custom_quad_points, normal)
 		update_preview_material(brush)
 		gizmo.add_mesh(quad_mesh, preview_material)
+
+func _append_tile_preview_quad(
+	mesh: ImmediateMesh,
+	brush: TileModeller,
+	offset: Vector2i,
+	tile_coord: Vector2,
+	snapped: Vector3,
+	normal: Vector3,
+	basis: Basis
+) -> void:
+	var axes = TileEditorPlugin.plane_axes_from_normal_hardcoded(normal)
+	var right: Vector3 = axes.right
+	var down: Vector3  = axes.down
+
+	var stamp_origin := TileEditorPlugin.get_stamp_origin(snapped, brush, normal)
+	var tile_step_world := float(brush.tile_size.x) / float(brush.brush_form.pixels_to_world_unit)
+
+	var rot_offset: Vector2i
+	match brush.orientation & 3:
+		0:
+			rot_offset = offset
+		1:
+			rot_offset = Vector2i(-offset.y, offset.x)
+		2:
+			rot_offset = Vector2i(-offset.x, -offset.y)
+		3:
+			rot_offset = Vector2i(offset.y, -offset.x)
+
+	var place_pos :=\
+		stamp_origin\
+		+ right * (rot_offset.x * tile_step_world)\
+		+ down  * (rot_offset.y * tile_step_world)
+
+	place_pos += TileEditorPlugin.wall_face_offset2(normal, right, down, brush)
+
+	var u_axis: Vector3 = basis.x.normalized()
+	var v_axis: Vector3 = basis.z.normalized()
+
+	var pts := [
+		place_pos,                                       
+		place_pos + u_axis * tile_step_world,                 
+		place_pos + v_axis * tile_step_world,                  
+		place_pos + u_axis * tile_step_world + v_axis * tile_step_world, 
+	]
+
+	var pivot = (pts[0] + pts[1] + pts[2] + pts[3]) * 0.25
+	var angle := deg_to_rad(brush.orientation * 90.0)
+
+	for i in range(4):
+		var p = pts[i] - pivot
+		p = p.rotated(normal, angle)
+		pts[i] = pivot + p
+
+	# UVs for this tile
+	var uvs := get_preview_quad_uvs_for_tile(brush, tile_coord, basis)
+	if uvs.size() != 4:
+		return
+
+	mesh.surface_set_normal(normal)
+	mesh.surface_set_uv(uvs[0]); mesh.surface_add_vertex(pts[0])
+	mesh.surface_set_uv(uvs[1]); mesh.surface_add_vertex(pts[1])
+	mesh.surface_set_uv(uvs[2]); mesh.surface_add_vertex(pts[2])
+
+	mesh.surface_set_uv(uvs[1]); mesh.surface_add_vertex(pts[1])
+	mesh.surface_set_uv(uvs[2]); mesh.surface_add_vertex(pts[2])
+	mesh.surface_set_uv(uvs[3]); mesh.surface_add_vertex(pts[3])
+
+func get_preview_quad_uvs_for_tile(
+	brush: TileModeller,
+	tile_coord: Vector2,
+	basis: Basis
+) -> PackedVector2Array:
+	var source_id := brush.active_tileset_source_id
+	if brush.tileset == null or not brush.tileset.has_source(source_id):
+		return PackedVector2Array()
+
+	var atlas_src := brush.tileset.get_source(source_id) as TileSetAtlasSource
+	if atlas_src == null or atlas_src.texture == null:
+		return PackedVector2Array()
+
+	var atlas_size := Vector2(atlas_src.texture.get_size())
+	var tile_size := Vector2(brush.tile_size)
+
+	var uv_rect := Rect2(tile_coord * tile_size, tile_size)
+
+	var uv_min := uv_rect.position / atlas_size
+	var uv_max := (uv_rect.position + uv_rect.size) / atlas_size
+
+	var u_axis := (basis * Vector3.RIGHT).normalized()
+	var v_axis := (basis * Vector3.BACK).normalized()
+	var n_axis := basis * Vector3.UP
+
+	if u_axis.cross(v_axis).dot(n_axis) < 0.0:
+		u_axis = -u_axis
+		v_axis = -v_axis
+
+	var is_wall_surface = func(n: Vector3) -> bool:
+		n = n.normalized()
+		return abs(n.y) < 0.99
+
+	var should_flip_wall_uv = func(n: Vector3) -> bool:
+		n = n.normalized()
+		if abs(n.y) > 0.99:
+			return false
+		return n.x < 0.0 or n.z < 0.0
+
+	var quad_world := float(brush.tile_size.x) / float(brush.brush_form.pixels_to_world_unit)
+
+	var corners := [
+		Vector3(0, 0, 0),
+		Vector3(quad_world, 0, 0),
+		Vector3(0, 0, quad_world),
+		Vector3(quad_world, 0, quad_world),
+	]
+
+	var out_uvs := PackedVector2Array()
+
+	for c in corners:
+
+		var rel = basis * c
+
+		var u = rel.dot(u_axis) / quad_world
+		var v = rel.dot(v_axis) / quad_world
+
+		u = 1.0 - u
+		v = 1.0 - v
+
+		if is_wall_surface.call(n_axis):
+			var tmp = u
+			u = v
+			v = 1.0 - tmp
+
+			if should_flip_wall_uv.call(n_axis):
+				u = 1.0 - u
+				v = 1.0 - v
+
+		out_uvs.append(Vector2(
+			lerp(uv_min.x, uv_max.x, u),
+			lerp(uv_min.y, uv_max.y, v)
+		))
+
+	return out_uvs
 
 
 func get_selected_tile_uv_data(brush: TileModeller):
@@ -249,7 +375,6 @@ func rotate_quad_uvs(
 	if o == 0:
 		return uvs
 
-	# stored → canonical
 	var c := [
 		uvs[0],
 		uvs[1],
@@ -258,19 +383,18 @@ func rotate_quad_uvs(
 	]
 
 	match o:
-		1: # 90° CW
+		1:
 			c = [c[3], c[0], c[1], c[2]]
-		2: # 180°
+		2:
 			c = [c[2], c[3], c[0], c[1]]
-		3: # 270° CW
+		3:
 			c = [c[1], c[2], c[3], c[0]]
 
-	# canonical → stored
 	return PackedVector2Array([
-		c[0], # TL
-		c[1], # TR
-		c[3], # BL
-		c[2], # BR
+		c[0],
+		c[1],
+		c[3],
+		c[2],
 	])
 
 func build_preview_quad_from_points(
@@ -285,14 +409,19 @@ func build_preview_quad_from_points(
 	var tile_size := Vector2(brush.tile_size)
 
 	var orientation := brush.orientation
-	if brush.select_mode == TileModeller.TileSelectMode.TILES:
-		orientation = 0
-	if brush.select_mode == TileModeller.TileSelectMode.CORNERS:
-		pts = custom_quad_points
 	if pts.is_empty():
 		return mesh
 	var angle := deg_to_rad(orientation * 90.0)
-	var pivot := pts[0]
+	var pivot: Vector3
+
+	if brush.select_mode == TileModeller.TileSelectMode.TILES:
+		pivot = Vector3.ZERO
+		for p in pts:
+			pivot += p
+		pivot /= pts.size()
+	else:
+		pivot = pts[0]
+
 	var local_axis := normal
 
 	var current_size := pts[0].distance_to(pts[1])
@@ -300,7 +429,7 @@ func build_preview_quad_from_points(
 	var scale = target_size / current_size
 
 	for i in range(pts.size()):
-		var p := pts[i] - pivot
+		var p = pts[i] - pivot
 		p *= scale
 		p = p.rotated(local_axis, angle)
 		pts[i] = pivot + p
@@ -312,7 +441,6 @@ func build_preview_quad_from_points(
 
 	mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
 
-	# Triangle 1: 0,1,2
 	mesh.surface_set_normal(normal)
 	mesh.surface_set_uv(uvs[0])
 	mesh.surface_add_vertex(pts[0])
@@ -325,7 +453,6 @@ func build_preview_quad_from_points(
 	mesh.surface_set_uv(uvs[2])
 	mesh.surface_add_vertex(pts[2])
 
-	# Triangle 2: 2,3,0
 	mesh.surface_set_normal(normal)
 	mesh.surface_set_uv(uvs[2])
 	mesh.surface_add_vertex(pts[2])
@@ -360,7 +487,6 @@ func get_preview_quad_uvs(brush: TileModeller) -> PackedVector2Array:
 		atlas_size
 	)
 
-	# IMPORTANT: same reorder used in placement
 	return PackedVector2Array([
 		quad_uvs_raw[0],
 		quad_uvs_raw[1],
@@ -392,13 +518,12 @@ func update_preview_material(brush: TileModeller):
 		return
 
 	preview_material.albedo_texture = uv_data.texture
-	preview_material.albedo_color = Color(5, 8, 5, .5)
+	preview_material.albedo_color = Color(.5, 1.25, 1.5, .25)
 
 	preview_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	preview_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	preview_material.blend_mode = BaseMaterial3D.BLEND_MODE_MIX
-
-	preview_material.albedo_texture_force_srgb = true
+	preview_material.emission_enabled = false
 	preview_material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
 	preview_material.cull_mode = BaseMaterial3D.CULL_DISABLED
 	preview_material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
