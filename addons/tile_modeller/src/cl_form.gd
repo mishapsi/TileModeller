@@ -24,8 +24,8 @@ enum Topology {
 @export var uvs : Array[Vector2]
 @export var indices : Array[int]
 @export var colors    : Array[Color]
-@export var face_source_by_id := {} # face_id -> source_id
-@export var quad_face_id_by_key := {} # quad_key -> face_id
+@export var face_source_by_id := {} 
+@export var quad_face_id_by_key := {}
 
 var _next_face_id := 1
 
@@ -218,11 +218,11 @@ func rotate_dir_2d(dir: Vector2i, orientation: int) -> Vector2i:
 	match orientation & 3:
 		0:
 			return dir
-		1: # 90° CW: (x,y) -> (y, -x)
+		1:
 			return Vector2i(dir.y, -dir.x)
-		2: # 180°: (x,y) -> (-x, -y)
+		2:
 			return Vector2i(-dir.x, -dir.y)
-		3: # 270° CW: (x,y) -> (-y, x)
+		3:
 			return Vector2i(-dir.y, dir.x)
 	return dir
 
@@ -246,11 +246,11 @@ func rotate_axes_in_plane(right: Vector3, down: Vector3, orientation: int) -> Ar
 	match orientation & 3:
 		0:
 			return [right, down]
-		1: # 90° CW
+		1:
 			return [-down, right]
-		2: # 180°
+		2:
 			return [-right, -down]
-		3: # 270° CW
+		3:
 			return [down, -right]
 	return [right, down]
 
@@ -896,69 +896,79 @@ func _place_custom_quad_internal(
 	face_source_by_id[face_id] = source_id
 	invalidate_triangle_lookup()
 
-func reorder_quad_for_your_indices(q3: Array, q2: Array, quv: Array, segs_intersect, normal_world) -> Dictionary:
-	# We must output verts in SOME order such that using indices:
-	#   (0,1,2) and (1,3,2)
-	# produces triangles that face normal_world AND the quad isn't a bow-tie.
-	# This brute-forces all 24 permutations and picks the best valid one.
+func reorder_quad_for_your_indices(
+	q3: Array,
+	q2: Array,
+	quv: Array,
+	segs_intersect,
+	normal_world: Vector3
+) -> Dictionary:
+	var tri_quality = func(a: Vector2, b: Vector2, c: Vector2) -> float:
+		var ab := b - a
+		var bc := c - b
+		var ca := a - c
+
+		var lab2 := ab.length_squared()
+		var lbc2 := bc.length_squared()
+		var lca2 := ca.length_squared()
+
+		var maxl2 := max(lab2, max(lbc2, lca2))
+		if maxl2 < 1e-12:
+			return 0.0
+
+		var area2 := abs(ab.cross(c - a))
+		return (area2 * area2) / maxl2
+
+	var build_candidate = func(loop_idx: Array, use_diag_02: bool) -> Array:
+		var v0 = loop_idx[0]
+		var v1 = loop_idx[1]
+		var v2 = loop_idx[2]
+		var v3 = loop_idx[3]
+		if use_diag_02:
+			return [v1, v0, v2, v3]
+		else:
+			return [v0, v1, v3, v2]
+
 	var best_score := -INF
-	var best := {}
+	var best_perm := PackedInt32Array()
 
-	var perms := [
-		[0,1,2,3],[0,1,3,2],[0,2,1,3],[0,2,3,1],[0,3,1,2],[0,3,2,1],
-		[1,0,2,3],[1,0,3,2],[1,2,0,3],[1,2,3,0],[1,3,0,2],[1,3,2,0],
-		[2,0,1,3],[2,0,3,1],[2,1,0,3],[2,1,3,0],[2,3,0,1],[2,3,1,0],
-		[3,0,1,2],[3,0,2,1],[3,1,0,2],[3,1,2,0],[3,2,0,1],[3,2,1,0],
-	]
+	var base_loop := [0, 1, 2, 3]
 
-	for perm in perms:
-		var p3 := [q3[perm[0]], q3[perm[1]], q3[perm[2]], q3[perm[3]]]
-		var p2 := [q2[perm[0]], q2[perm[1]], q2[perm[2]], q2[perm[3]]]
-		var uv := [quv[perm[0]], quv[perm[1]], quv[perm[2]], quv[perm[3]]]
+	for rot in range(4):
 
-		# Bow-tie test for the quad edges implied by your triangulation:
-		# edges: 0-1, 1-3, 3-2, 2-0
-		# Non-adjacent pairs to test: (0-1) vs (2-3), (1-3) vs (0-2)
-		if segs_intersect.call(p2[0], p2[1], p2[2], p2[3]):
-			continue
-		if segs_intersect.call(p2[1], p2[3], p2[0], p2[2]):
-			continue
+		var loop := []
+		for k in range(4):
+			loop.append(base_loop[(k + rot) % 4])
 
-		# Triangle facing tests with YOUR triangle split
-		var n0 := compute_triangle_normal(p3[0], p3[1], p3[2])
-		var n1 := compute_triangle_normal(p3[1], p3[3], p3[2])
-		var dn0 := n0.dot(normal_world)
-		var dn1 := n1.dot(normal_world)
+		for use_diag_02 in [true, false]:
+			var perm := build_candidate.call(loop, use_diag_02)
+			var p2 := [q2[perm[0]], q2[perm[1]], q2[perm[2]], q2[perm[3]]]
 
-		if dn0 <= 0.0 or dn1 <= 0.0:
-			continue
+			if segs_intersect.call(p2[0], p2[1], p2[3], p2[2]):
+				continue
 
-		# Score:
-		# Prefer a "grid-like" mapping where p2 U aligns with UV.x and p2 V aligns with UV.y,
-		# AND triangles face the normal strongly.
-		var du2 = p2[1] - p2[0]
-		var dv2 = p2[2] - p2[0]
-		var duv = uv[1] - uv[0]
-		var dvv = uv[2] - uv[0]
+			var q_t0 := tri_quality.call(p2[0], p2[1], p2[2])
+			var q_t1 := tri_quality.call(p2[1], p2[3], p2[2])
 
-		var du2n = du2.normalized()
-		var dv2n = dv2.normalized()
-		var duvn = duv.normalized()
-		var dvvn = dvv.normalized()
+			var score := min(q_t0, q_t1)
 
-		var align = du2n.dot(Vector2(1,0)) * sign(duvn.dot(Vector2(1,0)))
-		align += dv2n.dot(Vector2(0,1)) * sign(dvvn.dot(Vector2(0,1)))
+			var t0n := compute_triangle_normal(q3[perm[0]], q3[perm[1]], q3[perm[2]])
+			var t1n := compute_triangle_normal(q3[perm[1]], q3[perm[3]], q3[perm[2]])
+			if t0n.dot(normal_world) < 0.0 or t1n.dot(normal_world) < 0.0:
+				continue
 
-		var score = dn0 + dn1 + align * 0.25
+			if score > best_score:
+				best_score = score
+				best_perm = PackedInt32Array(perm)
 
-		if score > best_score:
-			best_score = score
-			best = {"p3": p3, "uv": uv}
-
-	# If somehow none validate, fall back to your old geometric ordering (but this is rare now)
-	if best.is_empty():
+	if best_perm.size() != 4:
 		return {"p3": q3, "uv": quv}
-	return best
+
+	return {
+		"p3": [q3[best_perm[0]], q3[best_perm[1]], q3[best_perm[2]], q3[best_perm[3]]],
+		"uv": [quv[best_perm[0]], quv[best_perm[1]], quv[best_perm[2]], quv[best_perm[3]]]
+	}
+
 
 func split_quad(
 	quad_index: int,
@@ -975,30 +985,20 @@ func split_quad(
 	var quad := quads[quad_index]
 	if quad.size() != 4:
 		return
-	# ---------------------------------------------------------
-	# Capture original face_id and source_id
-	# ---------------------------------------------------------
+
 	var orig_quad_key := make_quad_key(quad)
 	var orig_face_id := quad_face_id_by_key.get(orig_quad_key, -1)
 	var orig_source_id := -1
 	if orig_face_id != -1:
 		orig_source_id = face_source_by_id.get(orig_face_id, -1)
 
-	# ---------------------------------------------------------
-	# Enforce consistent handedness for the local plane basis:
-	# We want (right × down) to point along normal.
-	# ---------------------------------------------------------
 	if right_world.cross(down_world).dot(normal_world) < 0.0:
 		down_world = -down_world
 
-	# ---------------------------------------------------------
-	# Helpers (must be var name = func ... and called with .call)
-	# ---------------------------------------------------------
 	var get_d = func(v: Vector2) -> float:
 		return v.y if axis == "horizontal" else v.x
 
 	var segs_intersect = func(a: Vector2, b: Vector2, c: Vector2, d: Vector2) -> bool:
-		# Proper 2D segment intersection test (including collinear overlap)
 		var orient = func(p: Vector2, q: Vector2, r: Vector2) -> float:
 			return (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x)
 
@@ -1043,7 +1043,6 @@ func split_quad(
 			base + 1, base + 3, base + 2
 		])
 
-		# ---- FACE INHERITANCE ----
 		if orig_face_id != -1:
 			var quad_verts := PackedInt32Array([
 				base + 0,
@@ -1066,30 +1065,22 @@ func split_quad(
 			uvs.append(t_uvs[i])
 		indices.append_array([base + 0, base + 1, base + 2])
 
-	# ---------------------------------------------------------
-	# Extract world positions + UVs (whatever order get_quads gives)
-	# ---------------------------------------------------------
 	var p3_raw := []
 	var uv_raw := []
 	for vi in quad:
 		p3_raw.append(positions[vi])
 		uv_raw.append(uvs[vi])
 
-	# Center
 	var center3 := Vector3.ZERO
 	for v in p3_raw:
 		center3 += v
 	center3 /= 4.0
 
-	# Project to 2D
 	var p2_raw := []
 	for v in p3_raw:
 		var rel = v - center3
 		p2_raw.append(Vector2(rel.dot(right_world), rel.dot(down_world)))
 
-	# ---------------------------------------------------------
-	# Canonicalize into CCW boundary loop in p2 for clipping
-	# ---------------------------------------------------------
 	var center2 := Vector2.ZERO
 	for c in p2_raw:
 		center2 += c
@@ -1110,13 +1101,11 @@ func split_quad(
 		p2.append(p2_raw[e.i])
 		puv.append(uv_raw[e.i])
 
-	# Make sure loop faces normal
 	if compute_triangle_normal(p3[0], p3[1], p3[2]).dot(normal_world) < 0.0:
 		p3.reverse()
 		p2.reverse()
 		puv.reverse()
 
-	# Reject if no crossing
 	var dmin := INF
 	var dmax := -INF
 	for v in p2:
@@ -1126,9 +1115,6 @@ func split_quad(
 	if offset_world <= dmin or offset_world >= dmax:
 		return
 
-	# ---------------------------------------------------------
-	# Clip polygon against split line (interpolating UVs)
-	# ---------------------------------------------------------
 	var polyA_3 := []
 	var polyA_2 := []
 	var polyA_uv := []
@@ -1177,12 +1163,6 @@ func split_quad(
 	if polyA_3.size() < 3 or polyB_3.size() < 3:
 		return
 
-	# ---------------------------------------------------------
-	# Emit polygons:
-	# 3 -> triangle
-	# 4 -> quad (choose best ordering for your triangulation)
-	# 5 -> quad + triangle (like your picture)
-	# ---------------------------------------------------------
 	var emit_poly = func(q3: Array, q2: Array, quv: Array) -> void:
 		var n := q3.size()
 
@@ -1197,7 +1177,6 @@ func split_quad(
 			return
 
 		if n == 5:
-			# Order CCW by angle for a stable split, then split into quad + tri.
 			var c2 := Vector2.ZERO
 			for v in q2: c2 += v
 			c2 /= 5.0
@@ -1220,7 +1199,6 @@ func split_quad(
 			if compute_triangle_normal(p3o[0], p3o[1], p3o[2]).dot(normal_world) < 0.0:
 				p3o.reverse(); p2o.reverse(); uvo.reverse()
 
-			# QUAD (0,1,2,3) + TRI (0,3,4)
 			var q3a := [p3o[0], p3o[1], p3o[2], p3o[3]]
 			var q2a := [p2o[0], p2o[1], p2o[2], p2o[3]]
 			var uva := [uvo[0], uvo[1], uvo[2], uvo[3]]
@@ -1237,24 +1215,21 @@ func split_quad(
 
 		push_warning("split_quad: unsupported polygon size %d" % n)
 
-	# ---------------------------------------------------------
-	# Remove original quad and emit results
-	# ---------------------------------------------------------
 	delete_quad(quad_index)
 
 	emit_poly.call(polyA_3, polyA_2, polyA_uv)
 	emit_poly.call(polyB_3, polyB_2, polyB_uv)
 
-	# ---------------------------------------------------------
-	# Finalize
-	# ---------------------------------------------------------
 	invalidate_triangle_lookup()
 	rebuild_quad_source_by_key()
 	notify_property_list_changed()
+
+
+
 func split_quad_along_texel(
 	quad_index: int,
-	axis: String,          # "horizontal" => split at V texel, else split at U texel
-	texel_coord: float,    # UV coordinate of the texel line (same UV space as stored uvs[])
+	axis: String,         
+	texel_coord: float,   
 	normal_world: Vector3,
 	right_world: Vector3,
 	down_world: Vector3
@@ -1266,25 +1241,15 @@ func split_quad_along_texel(
 	var quad := quads[quad_index]
 	if quad.size() != 4:
 		return
-	# ---------------------------------------------------------
-	# Capture original face_id and source_id
-	# ---------------------------------------------------------
 	var orig_quad_key := make_quad_key(quad)
 	var orig_face_id := quad_face_id_by_key.get(orig_quad_key, -1)
 	var orig_source_id := -1
 	if orig_face_id != -1:
 		orig_source_id = face_source_by_id.get(orig_face_id, -1)
 
-	# ---------------------------------------------------------
-	# Enforce consistent handedness for the local plane basis:
-	# We want (right × down) to point along normal.
-	# ---------------------------------------------------------
 	if right_world.cross(down_world).dot(normal_world) < 0.0:
 		down_world = -down_world
 
-	# ---------------------------------------------------------
-	# Helpers (lambdas must be var ... = func and called with .call)
-	# ---------------------------------------------------------
 	var get_d_uv = func(uv: Vector2) -> float:
 		return uv.y if axis == "horizontal" else uv.x
 
@@ -1331,7 +1296,6 @@ func split_quad_along_texel(
 			base + 1, base + 3, base + 2
 		])
 
-		# ---- FACE INHERITANCE ----
 		if orig_face_id != -1:
 			var quad_verts := PackedInt32Array([
 				base + 0,
@@ -1353,21 +1317,12 @@ func split_quad_along_texel(
 			colors.append(Color.WHITE)
 			uvs.append(t_uvs[i])
 		indices.append_array([base + 0, base + 1, base + 2])
-
-	# ---------------------------------------------------------
-	# Extract world positions + UVs (whatever order get_quads gives)
-	# ---------------------------------------------------------
 	var p3_raw := []
 	var uv_raw := []
 	for vi in quad:
 		p3_raw.append(positions[vi])
 		uv_raw.append(uvs[vi])
 
-	# ---------------------------------------------------------
-	# Canonicalize into a stable boundary loop using UV angles
-	# (UVs are the thing we’re splitting on, so they’re the right space
-	# to determine adjacency/winding here.)
-	# ---------------------------------------------------------
 	var uv_center := Vector2.ZERO
 	for uv in uv_raw:
 		uv_center += uv
@@ -1386,16 +1341,10 @@ func split_quad_along_texel(
 		p3.append(p3_raw[e.i])
 		puv.append(uv_raw[e.i])
 
-	# Ensure loop faces normal
 	if compute_triangle_normal(p3[0], p3[1], p3[2]).dot(normal_world) < 0.0:
 		p3.reverse()
 		puv.reverse()
 
-	# ---------------------------------------------------------
-	# Build a corresponding 2D "shape space" for reorder scoring:
-	# we still want a 2D space for bow-tie tests and "grid-like" scoring,
-	# so we use projected plane coords here (like your original split_quad).
-	# ---------------------------------------------------------
 	var center3 := Vector3.ZERO
 	for v in p3:
 		center3 += v
@@ -1406,13 +1355,6 @@ func split_quad_along_texel(
 		var rel = v - center3
 		p2.append(Vector2(rel.dot(right_world), rel.dot(down_world)))
 
-	# ---------------------------------------------------------
-	# Reject if texel line doesn't cross polygon in UV-space
-	# ---------------------------------------------------------
-	# ---------------------------------------------------------
-	# Reject if texel line doesn't cross quad in ORIGINAL UV space
-	# (important: do NOT use reordered UVs here)
-	# ---------------------------------------------------------
 	var dmin := INF
 	var dmax := -INF
 
@@ -1421,18 +1363,11 @@ func split_quad_along_texel(
 		dmin = min(dmin, d)
 		dmax = max(dmax, d)
 
-	# Use epsilon to avoid precision edge cases
 	var eps := 1e-6
 	if texel_coord <= dmin + eps or texel_coord >= dmax - eps:
 		print("test (texel outside quad span)", texel_coord, dmin, dmax)
 		return
 
-
-	# ---------------------------------------------------------
-	# Clip polygon against texel line IN UV SPACE (texel-perfect),
-	# interpolating world position along edges.
-	# We also interpolate p2 (plane projection) for correct reorder scoring.
-	# ---------------------------------------------------------
 	var polyA_3 := []
 	var polyA_2 := []
 	var polyA_uv := []
@@ -1482,12 +1417,6 @@ func split_quad_along_texel(
 
 		return
 
-	# ---------------------------------------------------------
-	# Emit polygons:
-	# 3 -> triangle
-	# 4 -> quad (choose best ordering for your triangulation)
-	# 5 -> quad + triangle (same as your main split_quad)
-	# ---------------------------------------------------------
 	var emit_poly = func(q3: Array, q2: Array, quv: Array) -> void:
 		var n := q3.size()
 
@@ -1502,7 +1431,6 @@ func split_quad_along_texel(
 			return
 
 		if n == 5:
-			# Order CCW by angle for stable split.
 			var c2 := Vector2.ZERO
 			for v in q2:
 				c2 += v
@@ -1526,7 +1454,6 @@ func split_quad_along_texel(
 			if compute_triangle_normal(p3o[0], p3o[1], p3o[2]).dot(normal_world) < 0.0:
 				p3o.reverse(); p2o.reverse(); uvo.reverse()
 
-			# QUAD (0,1,2,3) + TRI (0,3,4)
 			var q3a := [p3o[0], p3o[1], p3o[2], p3o[3]]
 			var q2a := [p2o[0], p2o[1], p2o[2], p2o[3]]
 			var uva := [uvo[0], uvo[1], uvo[2], uvo[3]]
@@ -1542,10 +1469,6 @@ func split_quad_along_texel(
 			return
 
 		push_warning("split_quad_along_texel: unsupported polygon size %d" % n)
-
-	# ---------------------------------------------------------
-	# Replace original quad
-	# ---------------------------------------------------------
 	delete_quad(quad_index)
 
 	emit_poly.call(polyA_3, polyA_2, polyA_uv)
@@ -1734,9 +1657,6 @@ func update_quad_uvs_at(
 		uvs[c] = tri_uvs[t_match][cc]
 	invalidate_triangle_lookup()
 
-# ============================================================
-# MESH EDITING
-# ============================================================
 func delete_vertex(vertex_index: int) -> void:
 	var affected_quad_keys := []
 	for quad in get_quads():
@@ -1890,7 +1810,6 @@ func remove_collapsed_triangles() -> void:
 			colors.remove_at(i)
 			removed.append(i)
 
-	# 4. Fix indices
 	removed.sort()
 	for i in range(indices.size()):
 		var shift := 0
@@ -1901,9 +1820,6 @@ func remove_collapsed_triangles() -> void:
 	invalidate_triangle_lookup()
 	rebuild_quad_source_by_key()
 
-# ============================================================
-# TRIANGLE LOOKUP CACHE
-# ============================================================
 
 var _tri_lookup := {}
 var _tri_lookup_dirty := true
@@ -2105,7 +2021,6 @@ func get_quads() -> Array[PackedInt32Array]:
 				break
 
 		if paired != -1:
-			# Merge into quad
 			used[i] = true
 			used[paired] = true
 
@@ -2120,11 +2035,9 @@ func get_quads() -> Array[PackedInt32Array]:
 			if verts.size() == 4:
 				faces.append(PackedInt32Array(verts))
 			else:
-				# Degenerate merge, fall back to triangle
 				faces.append(PackedInt32Array(tri_a))
 				used[i] = true
 		else:
-			# No pair found → keep triangle
 			used[i] = true
 			faces.append(PackedInt32Array(tri_a))
 
@@ -2190,7 +2103,6 @@ func _quad_key_from_verts(verts: PackedInt32Array) -> PackedInt32Array:
 func rebuild_quad_source_by_key() -> void:
 	var new_key_to_face := {}
 
-	# Snapshot old faces for inheritance
 	var old_faces := []
 	for old_key in quad_face_id_by_key.keys():
 		old_faces.append({
@@ -2198,16 +2110,12 @@ func rebuild_quad_source_by_key() -> void:
 			"face_id": quad_face_id_by_key[old_key],
 		})
 
-	# Track which face IDs survive this rebuild
 	var alive_face_ids := {}
 
 	for face in get_quads():
 		var key := _quad_key_from_verts(face)
 
-		# 1. Exact key reuse
 		var face_id := quad_face_id_by_key.get(key, -1)
-
-		# 2. Inherit from parent face (quad ↔ tri)
 		if face_id == -1:
 			var best_match := -1
 			var best_shared := 0
@@ -2225,17 +2133,14 @@ func rebuild_quad_source_by_key() -> void:
 			if best_shared >= min(2, key.size()):
 				face_id = best_match
 
-		# 3. Still new → allocate
 		if face_id == -1:
 			face_id = _alloc_face_id()
 
 		new_key_to_face[key] = face_id
 		alive_face_ids[face_id] = true
 
-	# Replace key → face mapping
 	quad_face_id_by_key = new_key_to_face
 
-	# --- PRUNE DEAD FACE IDS ---
 	var to_remove := []
 	for face_id in face_source_by_id.keys():
 		if not alive_face_ids.has(face_id):
