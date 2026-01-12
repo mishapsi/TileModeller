@@ -510,12 +510,12 @@ func get_custom_quad(
 
 	var center_px := Vector2.ZERO
 	for p in rotated_px:
-		center_px += p * ((float(pixels_to_world_unit) * (float(brush.tile_size.x)/float(pixels_to_world_unit)))) / pixels_to_world_unit
+		center_px += p
 	center_px /= float(rotated_px.size()) 
 
 	var world_pts := PackedVector3Array()
 	for p in rotated_px:
-		var local_px = p  - center_px
+		var local_px = p - rotated_px[0]
 
 		var world_offset =\
 			right * (local_px.x * pixel_to_world) +\
