@@ -455,7 +455,7 @@ func _try_stamp_at_mouse(
 		get_editor_interface().get_editor_viewport_3d().get_camera_3d(),
 		focus_point
 	)
-
+	
 func get_custom_quad(
 	viewport_camera: Camera3D,
 	event: InputEvent,
@@ -477,62 +477,54 @@ func get_custom_quad(
 
 	var normal := plane.normal.normalized()
 
+	var pixels_to_world_unit := float(brush.brush_form.pixels_to_world_unit)
+	var pixel_to_world: float= 1.0 / ((float(pixels_to_world_unit) * (float(brush.tile_size.x)/float(pixels_to_world_unit))))
+
 	var snapped := snap_point_to_plane_grid(
 		hit,
 		viewport_camera,
 		normal,
 		cursor.global_position,
-		Vector2(
-			brush.vertex_snap,
-			brush.vertex_snap
-		) / Vector2(
-			brush.brush_form.pixels_to_world_unit,
-			brush.brush_form.pixels_to_world_unit
-		)
+		Vector2(brush.vertex_snap, brush.vertex_snap)
+			/ Vector2(pixels_to_world_unit, pixels_to_world_unit)
 	)
 
 	var axes := plane_axes_from_normal_hardcoded(normal)
-	var right : Vector3 = axes.right.normalized()
-	var down  : Vector3 = axes.down.normalized()
+	var right = axes.right.normalized()
+	var down  = axes.down.normalized()
 
 	var face_offset := wall_face_offset(brush, normal)
-	var pixel_to_world := 1.0 / (float(brush.brush_form.pixels_to_world_unit) * (float(brush.tile_size.x)/float(brush.brush_form.pixels_to_world_unit)))
 
 	if brush.tile_corners.size() < 4:
 		return PackedVector3Array()
-	var corners := brush.tile_corners
-	var origin = corners[0]
 
-	var min_uv := Vector2(INF, INF)
-
-	for c in corners:
-		var local = c - origin
-		var rotated : Vector2
+	var rotated_px: Array = []
+	for c in brush.tile_corners:
+		var p: Vector2
 		match brush.orientation & 3:
-			0:
-				rotated = local
-			1:
-				rotated = Vector2(-local.y, local.x)
-			2:
-				rotated = Vector2(-local.x, -local.y)
-			3:
-				rotated = Vector2(local.y, -local.x)
+			0: p = Vector2(c)
+			1: p = Vector2(-c.y, c.x)
+			2: p = Vector2(-c.x, -c.y)
+			3: p = Vector2(c.y, -c.x)
+		rotated_px.append(p)
 
-		min_uv.x = min(min_uv.x, rotated.x)
-		min_uv.y = min(min_uv.y, rotated.y)
-
-	var origin_uv = origin + min_uv
+	var center_px := Vector2.ZERO
+	for p in rotated_px:
+		center_px += p * ((float(pixels_to_world_unit) * (float(brush.tile_size.x)/float(pixels_to_world_unit)))) / pixels_to_world_unit
+	center_px /= float(rotated_px.size()) 
 
 	var world_pts := PackedVector3Array()
+	for p in rotated_px:
+		var local_px = p  - center_px
 
-	for c in brush.tile_corners:
-		var local_px : Vector2 = c - origin_uv
-		var world_offset = right * (local_px.x * pixel_to_world) + down  * (local_px.y * pixel_to_world)
+		var world_offset =\
+			right * (local_px.x * pixel_to_world) +\
+			down  * (local_px.y * pixel_to_world)
 
 		world_pts.append(
-			snapped
-			+ face_offset
-			+ world_offset
+			snapped +
+
+			world_offset
 		)
 
 	return world_pts
@@ -567,20 +559,12 @@ func _try_stamp_custom_quad(
 		Vector2(brush.vertex_snap, brush.vertex_snap)/ Vector2(brush.brush_form.pixels_to_world_unit,brush.brush_form.pixels_to_world_unit)
 	)
 
-	var cell := Vector3i(
-		floor(snapped.x),
-		floor(snapped.y),
-		floor(snapped.z)
-	)
-	if cell == _last_stamp_cell:
-		return
-	_last_stamp_cell = cell
-
 	var bf = brush.brush_form
 
 	var basis := basis_from_plane(normal, brush.orientation)
 
 	bf.place_custom_quad_undoable(
+		brush,
 		quad_points,
 		normal,
 		basis,

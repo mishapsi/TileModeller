@@ -754,6 +754,7 @@ func _place_quad_internal(
 	return
 
 func place_custom_quad_undoable(
+	brush:TileModeller,
 	world_points: PackedVector3Array,
 	normal: Vector3,
 	_basis: Basis,
@@ -764,7 +765,7 @@ func place_custom_quad_undoable(
 	brush_tile_corners:Array,
 	brush_orientation:int,
 ) -> void:
-
+	
 	var undo_redo := EditorInterface.get_editor_undo_redo()
 
 	if not _quad_painting:
@@ -778,6 +779,7 @@ func place_custom_quad_undoable(
 	undo_redo.add_do_method(
 		self,
 		"_place_custom_quad_internal",
+		brush,
 		world_points,
 		normal,
 		_basis,
@@ -786,7 +788,7 @@ func place_custom_quad_undoable(
 		tile_size,
 		tileset,
 		brush_tile_corners,
-		brush_orientation,
+		brush_orientation
 	)
 
 	undo_redo.add_undo_method(
@@ -797,16 +799,26 @@ func place_custom_quad_undoable(
 
 	undo_redo.commit_action()
 
+func quad_extent_along_axis(points: PackedVector3Array, axis: Vector3) -> float:
+	var min_d := INF
+	var max_d := -INF
+	for p in points:
+		var d := p.dot(axis)
+		min_d = min(min_d, d)
+		max_d = max(max_d, d)
+	return max_d - min_d
+	
 func _place_custom_quad_internal(
+	brush:TileModeller,
 	world_points: PackedVector3Array,
 	normal: Vector3,
 	_basis: Basis,
-	source_id:int,
+	source_id: int,
 	fallback_tile_coord: Vector2,
 	tile_size: Vector2,
 	tileset: TileSet,
 	tile_corners: Array,
-	brush_orientation:int,
+	brush_orientation: int,
 ) -> void:
 
 	if not tileset.has_source(source_id):
@@ -816,8 +828,9 @@ func _place_custom_quad_internal(
 	if atlas_src == null or atlas_src.texture == null:
 		return
 
-	var atlas_size := Vector2(atlas_src.texture.get_size())
-
+	# -------------------------------------------------
+	# Canonical quad order (0,1,3,2)
+	# -------------------------------------------------
 	var p := [
 		world_points[0],
 		world_points[1],
@@ -825,28 +838,40 @@ func _place_custom_quad_internal(
 		world_points[2],
 	]
 
-	var orientation = brush_orientation
-	var angle := deg_to_rad(orientation * 90.0)
+	# -------------------------------------------------
+	# Choose pivot EXACTLY like preview
+	# -------------------------------------------------
+	var pivot: Vector3
+	if brush.select_mode == TileModeller.TileSelectMode.TILES:
+		pivot = Vector3.ZERO
+		for v in p:
+			pivot += v
+		pivot /= p.size()
+	else:
+		pivot = p[0]
 
-	var center := world_points[0]
-	var current_size := world_points[0].distance_to(world_points[1])
-	var target_size = get_quad_size(tile_size.x*current_size)
+	# -------------------------------------------------
+	# Compute scale EXACTLY like preview
+	# -------------------------------------------------
+	var current_size = p[0].distance_to(p[1])
+	if current_size < 1e-8:
+		return
+
+	var target_size = brush.brush_form.get_quad_size(tile_size.x * current_size)
 	var scale = target_size / current_size
 
-	var axis := normal.normalized()
+	# -------------------------------------------------
+	# Apply UNIFORM scaling (NO rotation)
+	# -------------------------------------------------
+	for i in range(p.size()):
+		var v = p[i] - pivot
+		v *= scale
+		p[i] = pivot + v
 
-	for i in p.size():
-		var local = p[i] - center
-		local *= scale
-		local = local.rotated(axis, angle)
-		p[i] = center + local
-
-	var tris := [
-		[p[0], p[1], p[2]],
-		[p[1], p[3], p[2]],
-	]
-
-	var uv_rect := Rect2(fallback_tile_coord * tile_size, tile_size)
+	# -------------------------------------------------
+	# Build UVs
+	# -------------------------------------------------
+	var atlas_size := Vector2(atlas_src.texture.get_size())
 
 	var quad_uvs_raw := generate_custom_quad_uvs(
 		fallback_tile_coord,
@@ -862,6 +887,9 @@ func _place_custom_quad_internal(
 		quad_uvs_raw[2],
 	]
 
+	# -------------------------------------------------
+	# Emit geometry
+	# -------------------------------------------------
 	var base := positions.size()
 
 	for v in p:
@@ -876,6 +904,9 @@ func _place_custom_quad_internal(
 		base + 1, base + 3, base + 2
 	])
 
+	# -------------------------------------------------
+	# Face bookkeeping
+	# -------------------------------------------------
 	var quad_verts := PackedInt32Array([
 		base + 0,
 		base + 1,
@@ -887,14 +918,16 @@ func _place_custom_quad_internal(
 	quad_key.sort()
 
 	var face_id: int
-
 	if quad_face_id_by_key.has(quad_key):
 		face_id = quad_face_id_by_key[quad_key]
 	else:
 		face_id = _alloc_face_id()
 		quad_face_id_by_key[quad_key] = face_id
+
 	face_source_by_id[face_id] = source_id
+
 	invalidate_triangle_lookup()
+
 
 func reorder_quad_for_your_indices(
 	q3: Array,

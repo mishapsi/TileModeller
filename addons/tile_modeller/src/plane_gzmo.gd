@@ -431,7 +431,7 @@ func build_preview_quad_from_points(
 	for i in range(pts.size()):
 		var p = pts[i] - pivot
 		p *= scale
-		p = p.rotated(local_axis, angle)
+		#p = p.rotated(local_axis, angle)
 		pts[i] = pivot + p
 
 	# ─── UVs (no rotation!) ───
