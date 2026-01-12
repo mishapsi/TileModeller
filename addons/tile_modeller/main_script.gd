@@ -496,7 +496,7 @@ func get_custom_quad(
 	var down  : Vector3 = axes.down.normalized()
 
 	var face_offset := wall_face_offset(brush, normal)
-	var pixel_to_world := 1.0 / brush.brush_form.pixels_to_world_unit
+	var pixel_to_world := 1.0 / (float(brush.brush_form.pixels_to_world_unit) * (float(brush.tile_size.x)/float(brush.brush_form.pixels_to_world_unit)))
 
 	if brush.tile_corners.size() < 4:
 		return PackedVector3Array()

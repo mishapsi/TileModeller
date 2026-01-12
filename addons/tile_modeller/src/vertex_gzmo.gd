@@ -52,6 +52,7 @@ var undo_snapshot
 var active_split_quad_index: int = -1
 var active_split_center: Vector3 = Vector3.ZERO
 var active_split_axis: String = "" 
+var active_split_texel_coord = Vector2()
 
 func _get_gizmo_name() -> String:
 	return "Vertex Snapper"
@@ -165,125 +166,28 @@ func _emit_quad_texel_split(brush: TileModeller) -> void:
 	if quad.size() != 4:
 		return
 
-	var center_local := Vector3.ZERO
-	for v in quad:
-		center_local += bf.positions[v]
-	center_local /= 4.0
-	var center_world := brush.global_transform * center_local
+	# World positions
+	var p3 := []
+	for vi in quad:
+		p3.append(brush.global_transform * bf.positions[vi])
 
-	var a := bf.positions[quad[0]]
-	var b := bf.positions[quad[1]]
-	var c := bf.positions[quad[2]]
-	var normal_local := (b - a).cross(c - a).normalized()
-	var normal_world := (brush.global_transform.basis * normal_local).normalized()
+	# Quad normal
+	var normal_world = (p3[1] - p3[0]).cross(p3[2] - p3[0]).normalized()
+	if normal_world.length_squared() < 1e-8:
+		return
 
+	# Stable consumer axes
 	var axes := TileEditorPlugin.plane_axes_from_normal_hardcoded(normal_world)
 	var right_world = axes.right.normalized()
 	var down_world  = axes.down.normalized()
-
 	if right_world.cross(down_world).dot(normal_world) < 0.0:
 		down_world = -down_world
 
-	var viewport := EditorInterface.get_editor_viewport_3d()
-	if viewport == null:
-		return
-
-	var camera := viewport.get_camera_3d()
-	if camera == null:
-		return
-
-	var mouse_pos := viewport.get_mouse_position()
-	var ray_origin := camera.project_ray_origin(mouse_pos)
-	var ray_dir    := camera.project_ray_normal(mouse_pos)
-
-	var plane := Plane(normal_world, center_world.dot(normal_world))
-	var hit := plane.intersects_ray(ray_origin, ray_dir)
-	if hit == null:
-		return
-
-	var p3 := []
-	var puv := []
-	for vi in quad:
-		p3.append(brush.global_transform * bf.positions[vi])
-		puv.append(bf.uvs[vi])
-
-	var uv_center := Vector2.ZERO
-	for uv in puv:
-		uv_center += uv
-	uv_center /= 4.0
-
-	var du_world := Vector3.ZERO
-	var dv_world := Vector3.ZERO
-
-	for i in range(4):
-		var du = puv[i].x - uv_center.x
-		var dv = puv[i].y - uv_center.y
-		du_world += (p3[i] - center_world) * du
-		dv_world += (p3[i] - center_world) * dv
-
-	if du_world.length() < 1e-6 or dv_world.length() < 1e-6:
-		return
-
-	du_world = du_world.normalized()
-	dv_world = dv_world.normalized()
-
-	var min_u := INF
-	var max_u := -INF
-	var min_v := INF
-	var max_v := -INF
-	for uv in puv:
-		min_u = min(min_u, uv.x)
-		max_u = max(max_u, uv.x)
-		min_v = min(min_v, uv.y)
-		max_v = max(max_v, uv.y)
-
-	var umin_p := INF
-	var umax_p := -INF
-	var vmin_p := INF
-	var vmax_p := -INF
-
-	for i in range(4):
-		var relv = p3[i] - center_world
-		var up = relv.dot(du_world)
-		var vp = relv.dot(dv_world)
-		umin_p = min(umin_p, up)
-		umax_p = max(umax_p, up)
-		vmin_p = min(vmin_p, vp)
-		vmax_p = max(vmax_p, vp)
-
-	if abs(umax_p - umin_p) < 1e-8 or abs(vmax_p - vmin_p) < 1e-8:
-		return
-
-	var rel = hit - center_world
-	var u_hit = rel.dot(du_world)
-	var v_hit = rel.dot(dv_world)
-
-	var tu := clamp(inverse_lerp(umin_p, umax_p, u_hit), 0.0, 1.0)
-	var tv := clamp(inverse_lerp(vmin_p, vmax_p, v_hit), 0.0, 1.0)
-
-	var uv_u := lerp(min_u, max_u, tu)
-	var uv_v := lerp(min_v, max_v, tv)
-
-	var tileset := brush.tileset
-	var src := tileset.get_source(brush.active_tileset_source_id)
-	if src == null or src.texture == null:
-		return
-
-	var atlas_size_px = src.texture.get_size()
-	var texel_uv_x = 1.0 / atlas_size_px.x
-	var texel_uv_y = 1.0 / atlas_size_px.y
-
-	var texel_coord: float
-	if active_split_axis == "horizontal":
-		texel_coord = round(uv_v / texel_uv_y) * texel_uv_y
-		texel_coord = clamp(texel_coord, min_v + texel_uv_y, max_v - texel_uv_y)
-	else:
-		texel_coord = round(uv_u / texel_uv_x) * texel_uv_x
-		texel_coord = clamp(texel_coord, min_u + texel_uv_x, max_u - texel_uv_x)
+	var texel_coord = active_split_texel_coord
 
 	quad_texel_split_requested.emit(
 		active_split_quad_index,
-		active_split_axis,   
+		active_split_axis,
 		texel_coord,
 		normal_world,
 		right_world,
@@ -620,49 +524,15 @@ func _pick_triangle_split_axis_from_mouse(
 		return "horizontal"
 	else:
 		return "vertical"
-func _pick_quad_split_axis_from_mouse(
-	camera: Camera3D,
-	brush: TileModeller,
-	quad: Array,
-	mouse_pos: Vector2
-) -> String:
-	var info := _get_best_quad_edge_from_mouse(
-		camera,
-		brush,
-		quad,
-		mouse_pos
-	)
-	if info.is_empty():
-		return active_split_axis
 
-	var edge_dir_2d: Vector2 = info.edge_dir_2d
+func _dist_point_to_seg_2d(p: Vector2, a: Vector2, b: Vector2) -> float:
+	var ab := b - a
+	var l2 := ab.length_squared()
+	if l2 < 1e-6:
+		return p.distance_to(a)
+	var t := clamp((p - a).dot(ab) / l2, 0.0, 1.0)
+	return p.distance_to(a + ab * t)
 
-	if abs(edge_dir_2d.x) >= abs(edge_dir_2d.y):
-		return "horizontal"
-	else:
-		return "vertical"
-
-
-
-func _build_thick_line_quad(
-	p0: Vector3,
-	p1: Vector3,
-	normal_world: Vector3,
-	camera: Camera3D,
-	thickness_world: float
-) -> Array:
-	var dir := (p1 - p0).normalized()
-	var view_dir := (camera.global_transform.origin - ((p0 + p1) * 0.5)).normalized()
-	var side := dir.cross(view_dir)
-	if side.length() < 1e-6:
-		side = dir.cross(normal_world)
-	side = side.normalized() * (thickness_world * 0.5)
-	return [
-		p0 - side,
-		p0 + side,
-		p1 - side,
-		p1 + side,
-	]
 
 func _get_best_quad_edge_from_mouse(
 	camera: Camera3D,
@@ -754,6 +624,140 @@ func _get_best_quad_edge_from_mouse(
 		"edge_dir_2d": (pts[i1] - pts[i0]).normalized(),
 		"center": center
 	}
+	
+func _compute_quad_face_normal(w: Array) -> Vector3:
+	var n0 = (w[1] - w[0]).cross(w[3] - w[0])
+	var n1 = (w[3] - w[1]).cross(w[2] - w[1])
+
+	var n = n0 + n1
+	if n.length_squared() < 1e-8:
+		return Vector3.ZERO
+
+	return n.normalized()
+
+func _pick_quad_edge_screen_space(
+	camera: Camera3D,
+	brush: TileModeller,
+	quad: Array,
+	mouse_pos: Vector2
+) -> Dictionary:
+	if quad.size() != 4:
+		return {}
+
+	var bf := brush.brush_form
+	var xf := brush.global_transform
+
+	var w := []
+	for vi in quad:
+		w.append(bf.positions[vi])
+
+	var s := []
+	for p in w:
+		s.append(camera.unproject_position(p))
+
+	var edges := [
+		[0, 1],
+		[1, 3],
+		[3, 2],
+		[2, 0]
+	]
+
+	var best_edge := -1
+	var best_dist := INF
+
+	for ei in range(edges.size()):
+		var i0 = edges[ei][0]
+		var i1 = edges[ei][1]
+
+		var d := _dist_point_to_seg_2d(mouse_pos, s[i0], s[i1])
+		if d < best_dist:
+			best_dist = d
+			best_edge = ei
+
+	if best_edge == -1:
+		return {}
+
+	var face_normal := _compute_quad_face_normal(w)
+	if face_normal == Vector3.ZERO:
+		return {}
+
+	var e0 = edges[best_edge][0]
+	var e1 = edges[best_edge][1]
+	var edge_dir = (w[e1] - w[e0]).normalized()
+	var edge_normal = edge_dir.cross(face_normal).normalized()
+
+	return {
+		"edge_index": best_edge,
+		"edge_verts": [e0, e1],
+		"edge_dir": edge_dir,
+		"edge_normal": edge_normal,
+		"quad_normal": face_normal,
+		"screen_dist": best_dist
+	}
+
+func project_to_quad_2d(v: Vector3, x: Vector3, y: Vector3) -> Vector2:
+	return Vector2(v.dot(x), v.dot(y))
+
+func _pick_quad_split_axis_from_mouse(
+	camera: Camera3D,
+	brush: TileModeller,
+	quad: Array,
+	mouse_pos: Vector2
+) -> String:
+	var info := _pick_quad_edge_screen_space(
+		camera,
+		brush,
+		quad,
+		mouse_pos
+	)
+	if info.is_empty():
+		return active_split_axis
+
+	var bf := brush.brush_form
+	var xf := brush.global_transform
+
+	var p3 := []
+	var puv := []
+	for vi in quad:
+		p3.append(xf * bf.positions[vi])
+		puv.append(bf.uvs[vi])
+
+	var center := Vector3.ZERO
+	for p in p3:
+		center += p
+	center /= 4.0
+
+	var uv_center := Vector2.ZERO
+	for uv in puv:
+		uv_center += uv
+	uv_center /= 4.0
+
+	var du_world := Vector3.ZERO
+	var dv_world := Vector3.ZERO
+
+	for i in range(4):
+		var du = puv[i].x - uv_center.x
+		var dv = puv[i].y - uv_center.y
+		du_world += (p3[i] - center) * du
+		dv_world += (p3[i] - center) * dv
+
+	if du_world.length_squared() < 1e-8 or dv_world.length_squared() < 1e-8:
+		return active_split_axis
+
+	du_world = du_world.normalized()
+	dv_world = dv_world.normalized()
+
+	var edge_dir: Vector3 = info.edge_dir.normalized()
+
+	var u_align := abs(edge_dir.dot(du_world))
+	var v_align := abs(edge_dir.dot(dv_world))
+
+	if u_align >= v_align:
+		return "vertical"
+	else:
+		return "horizontal"
+
+
 
 func _draw_texel_split_axis_line(gizmo: EditorNode3DGizmo, brush: TileModeller) -> void:
 	if active_split_quad_index < 0:
@@ -772,17 +776,24 @@ func _draw_texel_split_axis_line(gizmo: EditorNode3DGizmo, brush: TileModeller) 
 		return
 	var mouse_pos := viewport.get_mouse_position()
 
-	var edge_info := _get_best_quad_edge_from_mouse(camera, brush, quad, mouse_pos)
-	if edge_info.is_empty():
+	var a := brush.global_transform * bf.positions[quad[0]]
+	var b := brush.global_transform * bf.positions[quad[1]]
+	var c := brush.global_transform * bf.positions[quad[2]]
+
+	var normal_world := (b - a).cross(c - a).normalized()
+	if normal_world.length_squared() < 1e-8:
 		return
 
-	var normal_world: Vector3 = edge_info.normal
-	var right_world: Vector3  = edge_info.right
-	var down_world: Vector3   = edge_info.down
-	var center_world: Vector3 = edge_info.center
+	var axes := TileEditorPlugin.plane_axes_from_normal_hardcoded(normal_world)
+	var right_world = axes.right.normalized()
+	var down_world  = axes.down.normalized()
+	if right_world.cross(down_world).dot(normal_world) < 0.0:
+		down_world = -down_world
 
-	var edge_dir_2d: Vector2 = edge_info.edge_dir_2d
-	active_split_axis = "horizontal" if abs(edge_dir_2d.x) >= abs(edge_dir_2d.y) else "vertical"
+	var center_world := Vector3.ZERO
+	for vi in quad:
+		center_world += brush.global_transform * bf.positions[vi]
+	center_world /= 4.0
 
 	var ray_origin := camera.project_ray_origin(mouse_pos)
 	var ray_dir    := camera.project_ray_normal(mouse_pos)
@@ -864,18 +875,36 @@ func _draw_texel_split_axis_line(gizmo: EditorNode3DGizmo, brush: TileModeller) 
 	if abs(umax_p - umin_p) < 1e-8 or abs(vmax_p - vmin_p) < 1e-8:
 		return
 
-	var rel = hit - center_world
-	var u_hit = rel.dot(du_world)
-	var v_hit = rel.dot(dv_world)
+	var use_v := active_split_axis == "horizontal"
 
-	var tu := clamp(inverse_lerp(umin_p, umax_p, u_hit), 0.0, 1.0)
-	var tv := clamp(inverse_lerp(vmin_p, vmax_p, v_hit), 0.0, 1.0)
+	var best_uv := 0.0
+	var best_d := INF
 
-	var uv_u := lerp(min_u, max_u, tu)
-	var uv_v := lerp(min_v, max_v, tv)
+	for i in range(4):
+		var j := (i + 1) % 4
 
+		var a3 = p3[i]
+		var b3 = p3[j]
+		var auv = puv[i]
+		var buv = puv[j]
+
+		var ab = b3 - a3
+		var t := clamp((hit - a3).dot(ab) / ab.dot(ab), 0.0, 1.0)
+		var p_edge = a3.lerp(b3, t)
+
+		var d = p_edge.distance_squared_to(hit)
+		if d < best_d:
+			best_d = d
+			best_uv = lerp(auv.y if use_v else auv.x,
+						   buv.y if use_v else buv.x,
+						   t)
+
+	var uv_u := best_uv if not use_v else 0.0
+	var uv_v := best_uv if use_v else 0.0
+
+	
 	var tileset := brush.tileset
-	var src := tileset.get_source(brush.active_tileset_source_id)
+	var src := tileset.get_source(brush.brush_form.face_source_by_id[(brush.brush_form.quad_face_id_by_key[quad])])
 	if src == null or src.texture == null:
 		return
 
@@ -904,7 +933,7 @@ func _draw_texel_split_axis_line(gizmo: EditorNode3DGizmo, brush: TileModeller) 
 	texel_coord = clamp(texel_coord, inner_min, inner_max)
 	texel_coord = round(texel_coord / step) * step
 	texel_coord = clamp(texel_coord, inner_min, inner_max)
-
+	active_split_texel_coord = texel_coord
 	var hits_world := []
 
 	for i in range(4):
@@ -940,7 +969,7 @@ func _draw_texel_split_axis_line(gizmo: EditorNode3DGizmo, brush: TileModeller) 
 	if hits_world.size() > 2:
 		var best_i := 0
 		var best_j := 1
-		var best_d := -INF
+		best_d = -INF
 		for ii in range(hits_world.size()):
 			for jj in range(ii + 1, hits_world.size()):
 				var d = hits_world[ii].distance_squared_to(hits_world[jj])

@@ -48,7 +48,7 @@ func _on_spin_box_value_changed(value: float) -> void:
 func set_brush_values(brush:TileModeller):
 	%VertexSnapSpinBox.value = brush.vertex_snap
 	%VertexColorButton.color = brush.vertex_color
-	%TexelButton.pressed = brush.quad_texel_split
+	%TexelButton.button_pressed = brush.quad_texel_split
 
 func _on_rotate_tile_pressed() -> void:
 	rotate_tile.emit()
