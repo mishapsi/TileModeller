@@ -15,7 +15,7 @@ const TILESET_PLUG := preload("uid://ds1ua8s3ma4um")
 var TilesetPalette = TILESET_PLUG.new()
 var UVEdit = UVEditPlug.new()
 var editor_camera: Camera3D
-var plane := Plane(Vector3.UP, 0.0) # y = 0 plane
+var plane := Plane(Vector3.UP, 0.0)
 var brush:TileModeller
 var _drag_painting := false
 var _last_stamp_cell : Vector3i = Vector3i(999999, 999999, 999999)
@@ -71,6 +71,10 @@ func _forward_3d_gui_input(
 		brush.orientation = int(fmod(brush.orientation + 1, 4))
 		get_viewport().set_input_as_handled()
 		return 0
+	if event is InputEventKey and event.keycode == KEY_T and event.pressed and !event.echo:
+		brush.brush_form.flip_quad_diagonal_undoable(vertexGZM.active_split_quad_index)
+		get_viewport().set_input_as_handled()
+		return 0
 	if brush.tool_mode == TileModeller.TOOL_MODE.QUAD_SPLIT:
 		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 			if vertexGZM.active_split_quad_index != -1 and !brush.quad_texel_split:
@@ -116,7 +120,7 @@ func _on_quad_texel_split_requested(
 	right_world: Vector3,
 	down_world: Vector3
 ) -> void:
-	brush.brush_form.split_quad_along_texel(
+	brush.brush_form.split_quad_along_texel_undoable(
 		quad_index,
 		axis,              
 		texel_coord,        
@@ -190,7 +194,6 @@ static func stable_plane_axes_from_normal(n: Vector3) -> Array[Vector3]:
 	var right := up.cross(n).normalized()
 	var down  := n.cross(right).normalized()
 
-	# 🔒 Enforce deterministic orientation
 	if right.dot(Vector3.RIGHT) > 0:
 		right = -right
 		down  = -down
@@ -199,7 +202,6 @@ static func stable_plane_axes_from_normal(n: Vector3) -> Array[Vector3]:
 static func orientation_index_from_normal(n: Vector3) -> int:
 	n = n.normalized()
 
-	# Use dominant axis
 	if abs(n.x) > abs(n.y) and abs(n.x) > abs(n.z):
 		return 1 if n.x > 0.0 else 3
 	elif abs(n.y) > abs(n.z):
@@ -215,11 +217,11 @@ static func rotate_axes_in_plane(
 	match orientation & 3:
 		0:
 			return [right, down]
-		1: # 90° CW
+		1: 
 			return [-down, right]
-		2: # 180°
+		2:
 			return [-right, -down]
-		3: # 270° CW
+		3:
 			return [down, -right]
 	return [right, down]
 static func basis_from_plane(normal: Vector3, orientation: int) -> Basis:
@@ -276,7 +278,6 @@ func _paint_custom_quad(event, selection, viewport_camera: Camera3D, brush: Tile
 			_restore_paint_selection()
 			return 2
 
-	# Dragging
 	if event is InputEventMouseMotion and _drag_painting and event.button_mask == MOUSE_BUTTON_LEFT:
 		_try_stamp_custom_quad(viewport_camera, event.position, brush, quad_points)
 		_restore_paint_selection()
@@ -292,15 +293,12 @@ static func wall_face_offset(brush, normal: Vector3) -> Vector3:
 	if normal.x > 0.9:
 		return Vector3(0, value.y, 0)
 
-	# -X wall
 	if normal.x < -0.9:
 		return Vector3(0, 0, value.x)
 
-	# +Z wall
 	if normal.z > 0.9:
 		return Vector3(0, value.y, 0)
 
-	# -Z wall
 	if normal.z < -0.9:
 		return Vector3(-value.x, 0, 0)
 
@@ -366,10 +364,10 @@ static func snap_point_to_plane_grid(
 
 static func _rotate_stamp_offset(offset: Vector2i, orientation: int) -> Vector2i:
 	match orientation & 3:
-		0: return offset                     # 0°
-		1: return Vector2i(-offset.y, offset.x)   # 90° CW
-		2: return Vector2i(-offset.x, -offset.y)  # 180°
-		3: return Vector2i(offset.y, -offset.x)   # 270° CW
+		0: return offset                   
+		1: return Vector2i(-offset.y, offset.x) 
+		2: return Vector2i(-offset.x, -offset.y) 
+		3: return Vector2i(offset.y, -offset.x) 
 	return offset
 
 
@@ -678,7 +676,6 @@ func _exit_tree():
 static func orientation_from_normal(n: Vector3) -> int:
 	n = n.normalized()
 
-	# Use dominant axis
 	if abs(n.x) > abs(n.y) and abs(n.x) > abs(n.z):
 		return 1 if n.x > 0.0 else 3
 	elif abs(n.y) > abs(n.z):
@@ -689,34 +686,30 @@ static func orientation_from_normal(n: Vector3) -> int:
 static func plane_axes_from_normal_hardcoded(normal: Vector3) -> Dictionary:
 	normal = normal.normalized()
 
-	# Floor (normal = +Y)
 	if normal.y > 0.9:
 		return {
-			"right": Vector3.RIGHT * -sign(normal.y),   # +X
-			"down":  Vector3.FORWARD * -sign(normal.y) # +Z
+			"right": Vector3.RIGHT * -sign(normal.y), 
+			"down":  Vector3.FORWARD * -sign(normal.y)
 		}
 
-	# Ceiling (normal = -Y)
 	if normal.y < -0.9:
 		return {
-			"right": Vector3.RIGHT,    # +X
-			"down":  Vector3.BACK      # -Z
+			"right": Vector3.RIGHT,  
+			"down":  Vector3.BACK   
 		}
 
-	# Wall facing +X / -X
 	if abs(normal.x) > 0.9:
 		return {
 			"right": Vector3.FORWARD * -sign(normal.x),
 			"down":  Vector3.DOWN
 		}
 
-	# Wall facing +Z / -Z
 	if abs(normal.z) > 0.9:
 		return {
 			"right": Vector3.RIGHT * -sign(normal.z),
 			"down":  Vector3.DOWN
 		}
-	# Fallback (should never hit)
+
 	return {
 		"right": Vector3.RIGHT,
 		"down":  Vector3.FORWARD
@@ -740,7 +733,6 @@ func focus_selection_gdscript() -> Vector3:
 
 	var node_3d := node as Node3D
 
-	# --- Equivalent to gizmo origin ---
 	var gizmo_xform := brush.cursor.global_transform
 	var pos := gizmo_xform.origin
 
@@ -777,7 +769,6 @@ func _focus_editor_camera_on_point(
 
 	var target_pos := target - forward * distance
 
-	# 🔒 Early out if already focused
 	if cam_xform.origin.distance_to(target_pos) <= CAMERA_FOCUS_EPSILON:
 		return
 

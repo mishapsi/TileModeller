@@ -7,6 +7,12 @@ This project is a fork of **[GodotNode2Tile](https://github.com/QJPG/GodotNode2T
 
 ---
 
+## Shortcuts
+ - 'R' to rotate tiles
+ - 'T' in Quad Split mode to flip quad triangulation
+
+---
+
 ## Features
 
 - Autotiling  

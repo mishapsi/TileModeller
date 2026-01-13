@@ -25,6 +25,10 @@ var split_line_mesh: ImmediateMesh
 var split_line_material: StandardMaterial3D
 var edge_mesh: ImmediateMesh
 var edge_material: StandardMaterial3D
+var inner_edge_mesh: ImmediateMesh
+var inner_edge_material: StandardMaterial3D
+var drag_origin_world: Vector3
+var drag_origin_handle_world: Vector3
 
 var grabbed: bool = false
 var vertex: int = -1
@@ -53,7 +57,10 @@ var active_split_quad_index: int = -1
 var active_split_center: Vector3 = Vector3.ZERO
 var active_split_axis: String = "" 
 var active_split_texel_coord = Vector2()
-
+	
+var handle_mesh := SphereMesh.new()
+var quad_highlight_mesh := ImmediateMesh.new()
+var quad_highlight_material := StandardMaterial3D.new()
 func _get_gizmo_name() -> String:
 	return "Vertex Snapper"
 
@@ -65,8 +72,8 @@ func _get_handle_value(gizmo: EditorNode3DGizmo, handle_id: int, secondary: bool
 
 func _has_gizmo(for_node_3d: Node3D) -> bool:
 	return for_node_3d is TileModeller
-	
-var handle_mesh := SphereMesh.new()
+
+
 
 func _init():
 	handle_mesh.height = .01
@@ -94,10 +101,22 @@ func _init():
 	edge_mesh = ImmediateMesh.new()
 	edge_material = StandardMaterial3D.new()
 	edge_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	edge_material.albedo_color = Color(.5, .5, .5,.5)
+	edge_material.albedo_color = Color(1, .5, .25,.75)
 	edge_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	edge_material.cull_mode =BaseMaterial3D.CULL_DISABLED
 
+	inner_edge_mesh = ImmediateMesh.new()
+	inner_edge_material = StandardMaterial3D.new()
+	inner_edge_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	inner_edge_material.albedo_color = Color(.25, .5, .25,.75)
+	inner_edge_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	inner_edge_material.cull_mode =BaseMaterial3D.CULL_DISABLED
+
+	quad_highlight_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	quad_highlight_material.albedo_color = Color(0.2, 0.8, 1.0, 0.05)
+	quad_highlight_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	quad_highlight_material.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
+	quad_highlight_material.cull_mode = BaseMaterial3D.CULL_DISABLED
 func _make_handle_material(color:Color) -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
 	mat.blend_mode = BaseMaterial3D.BLEND_MODE_MIX
@@ -166,17 +185,14 @@ func _emit_quad_texel_split(brush: TileModeller) -> void:
 	if quad.size() != 4:
 		return
 
-	# World positions
 	var p3 := []
 	for vi in quad:
 		p3.append(brush.global_transform * bf.positions[vi])
 
-	# Quad normal
 	var normal_world = (p3[1] - p3[0]).cross(p3[2] - p3[0]).normalized()
 	if normal_world.length_squared() < 1e-8:
 		return
 
-	# Stable consumer axes
 	var axes := TileEditorPlugin.plane_axes_from_normal_hardcoded(normal_world)
 	var right_world = axes.right.normalized()
 	var down_world  = axes.down.normalized()
@@ -295,6 +311,8 @@ func _draw_vertex_handles(gizmo, node):
 			false,
 			false
 		)
+	_draw_active_quad_highlight(gizmo, node)
+
 	if node.tool_mode in [TileModeller.TOOL_MODE.MOVE_VERTEX,TileModeller.TOOL_MODE.QUAD_SPLIT]:
 		_draw_triangle_outline(gizmo, node)
 	if node.tool_mode == TileModeller.TOOL_MODE.QUAD_SPLIT:
@@ -338,12 +356,86 @@ func _draw_vertex_handles(gizmo, node):
 
 	else:
 		active_split_quad_index = -1
+
+func _draw_active_quad_highlight(
+	gizmo: EditorNode3DGizmo,
+	brush: TileModeller
+) -> void:
+	if active_split_quad_index < 0:
+		return
+
+	var bf := brush.brush_form
+	var quads := bf.get_quads()
+	if active_split_quad_index >= quads.size():
+		return
+
+	var quad := quads[active_split_quad_index]
+	if quad.size() != 4:
+		return
+
+	var xf := brush.global_transform
+
+	var quad_set := {}
+	for v in quad:
+		quad_set[v] = true
+
+	var tris := []
+	for t in range(0, bf.indices.size(), 3):
+		var a := bf.indices[t]
+		var b := bf.indices[t + 1]
+		var c := bf.indices[t + 2]
+		if quad_set.has(a) and quad_set.has(b) and quad_set.has(c):
+			tris.append([a, b, c])
+			if tris.size() == 2:
+				break
+
+	if tris.size() != 2:
+		return
+
+	var tp := []
+	for tri in tris:
+		var w := []
+		for vi in tri:
+			w.append(xf * bf.positions[vi])
+		tp.append(w)
+
+	var normal = (tp[0][1] - tp[0][0]).cross(tp[0][2] - tp[0][0]).normalized()
+	if normal.length_squared() < 1e-8:
+		return
+
+	var offset = normal * -0.005
+	for ti in range(2):
+		for i in range(3):
+			tp[ti][i] += offset
+
+	quad_highlight_mesh.clear_surfaces()
+	quad_highlight_mesh.surface_begin(
+		Mesh.PRIMITIVE_TRIANGLES,
+		quad_highlight_material
+	)
+
+	for tri in tp:
+		quad_highlight_mesh.surface_add_vertex(tri[0])
+		quad_highlight_mesh.surface_add_vertex(tri[1])
+		quad_highlight_mesh.surface_add_vertex(tri[2])
+
+	quad_highlight_mesh.surface_end()
+
+	gizmo.add_mesh(
+		quad_highlight_mesh,
+		quad_highlight_material,
+		Transform3D.IDENTITY
+	)
+
+
 func _draw_triangle_outline(
 	gizmo: EditorNode3DGizmo,
 	brush: TileModeller
 ) -> void:
 	if !edge_mesh:
 		edge_mesh = ImmediateMesh.new()
+	if !inner_edge_mesh:
+		inner_edge_mesh = ImmediateMesh.new()
 	var bf := brush.brush_form
 	if bf.indices.size() < 3:
 		return
@@ -353,8 +445,8 @@ func _draw_triangle_outline(
 		return
 
 	var edge_count := {}
-
 	var indices := bf.indices
+
 	for i in range(0, indices.size(), 3):
 		var a := indices[i]
 		var b := indices[i + 1]
@@ -366,12 +458,24 @@ func _draw_triangle_outline(
 
 	edge_mesh.clear_surfaces()
 	edge_mesh.surface_begin(
-		Mesh.PRIMITIVE_TRIANGLES,
+		Mesh.PRIMITIVE_LINES,
 		edge_material
 	)
-
+	inner_edge_mesh.clear_surfaces()
+	inner_edge_mesh.surface_begin(
+		Mesh.PRIMITIVE_LINES,
+		inner_edge_material
+	)
 	for key in edge_count.keys():
-		if edge_count[key] > 1: continue
+		if edge_count[key] > 1:
+			var i0 = key.x
+			var i1 = key.y
+
+			var p0 := brush.global_transform * bf.positions[i0]
+			var p1 := brush.global_transform * bf.positions[i1]
+
+			_add_offset_line(p0, p1, camera, inner_edge_mesh)
+			continue
 
 		var i0 = key.x
 		var i1 = key.y
@@ -379,13 +483,19 @@ func _draw_triangle_outline(
 		var p0 := brush.global_transform * bf.positions[i0]
 		var p1 := brush.global_transform * bf.positions[i1]
 
-		_add_thick_edge(p0, p1, camera,edge_mesh)
-
+		_add_offset_line(p0, p1, camera, edge_mesh)
+	inner_edge_mesh.surface_end()
 	edge_mesh.surface_end()
 
 	gizmo.add_mesh(
 		edge_mesh,
 		edge_material,
+		Transform3D.IDENTITY
+	)
+
+	gizmo.add_mesh(
+		inner_edge_mesh,
+		inner_edge_material,
 		Transform3D.IDENTITY
 	)
 
@@ -399,34 +509,19 @@ func _count_edge(map: Dictionary, i0: int, i1: int) -> void:
 	else:
 		map[key] = 1
 
-
-func _add_thick_edge(
+func _add_offset_line(
 	p0: Vector3,
 	p1: Vector3,
 	camera: Camera3D,
 	mesh: ImmediateMesh
 ) -> void:
-	var dir := (p1 - p0).normalized()
-	var view_dir := (camera.global_transform.origin - (p0 + p1) * 0.5).normalized()
+	var mid := (p0 + p1) * 0.5
+	var view_dir := (camera.global_transform.origin - mid).normalized()
 
-	var side := dir.cross(view_dir)
-	if side.length() < 1e-6:
-		return
+	var offset := view_dir * 0.01
 
-	side = side.normalized() * 0.005
-
-	var a := p0 - side
-	var b := p0 + side
-	var c := p1 - side
-	var d := p1 + side
-
-	mesh.surface_add_vertex(a)
-	mesh.surface_add_vertex(b)
-	mesh.surface_add_vertex(c)
-
-	mesh.surface_add_vertex(b)
-	mesh.surface_add_vertex(d)
-	mesh.surface_add_vertex(c)
+	mesh.surface_add_vertex(p0 + offset)
+	mesh.surface_add_vertex(p1 + offset)
 
 
 func _dist_point_to_segment_2d(p: Vector2, a: Vector2, b: Vector2) -> float:
@@ -758,13 +853,20 @@ func _pick_quad_split_axis_from_mouse(
 		return "horizontal"
 
 
+func _draw_texel_split_axis_line(
+	gizmo: EditorNode3DGizmo,
+	brush: TileModeller
+) -> void:
 
-func _draw_texel_split_axis_line(gizmo: EditorNode3DGizmo, brush: TileModeller) -> void:
 	if active_split_quad_index < 0:
 		return
 
 	var bf := brush.brush_form
-	var quad := bf.get_quads()[active_split_quad_index]
+	var quads := bf.get_quads()
+	if active_split_quad_index >= quads.size():
+		return
+
+	var quad := quads[active_split_quad_index]
 	if quad.size() != 4:
 		return
 
@@ -776,11 +878,30 @@ func _draw_texel_split_axis_line(gizmo: EditorNode3DGizmo, brush: TileModeller) 
 		return
 	var mouse_pos := viewport.get_mouse_position()
 
-	var a := brush.global_transform * bf.positions[quad[0]]
-	var b := brush.global_transform * bf.positions[quad[1]]
-	var c := brush.global_transform * bf.positions[quad[2]]
+	var quad_set := {}
+	for v in quad:
+		quad_set[v] = true
 
-	var normal_world := (b - a).cross(c - a).normalized()
+	var tris := []
+	for t in range(0, bf.indices.size(), 3):
+		var a := bf.indices[t]
+		var b := bf.indices[t + 1]
+		var c := bf.indices[t + 2]
+		if quad_set.has(a) and quad_set.has(b) and quad_set.has(c):
+			tris.append([a, b, c])
+			if tris.size() == 2:
+				break
+
+	if tris.size() != 2:
+		return
+
+	var xf := brush.global_transform
+
+	var p0 := xf * bf.positions[tris[0][0]]
+	var p1 := xf * bf.positions[tris[0][1]]
+	var p2 := xf * bf.positions[tris[0][2]]
+
+	var normal_world := (p1 - p0).cross(p2 - p0).normalized()
 	if normal_world.length_squared() < 1e-8:
 		return
 
@@ -790,9 +911,50 @@ func _draw_texel_split_axis_line(gizmo: EditorNode3DGizmo, brush: TileModeller) 
 	if right_world.cross(down_world).dot(normal_world) < 0.0:
 		down_world = -down_world
 
+	var edge_count := {}
+	var edges := []
+
+	var add_edge = func(a, b):
+		var key := Vector2i(min(a, b), max(a, b))
+		edge_count[key] = edge_count.get(key, 0) + 1
+		edges.append([a, b])
+
+	for tri in tris:
+		add_edge.call(tri[0], tri[1])
+		add_edge.call(tri[1], tri[2])
+		add_edge.call(tri[2], tri[0])
+
+	var boundary := []
+	for e in edges:
+		var key := Vector2i(min(e[0], e[1]), max(e[0], e[1]))
+		if edge_count[key] == 1:
+			boundary.append(e)
+
+	if boundary.size() != 4:
+		return
+
+	var loop := [boundary[0][0], boundary[0][1]]
+	while loop.size() < 4:
+		for e in boundary:
+			if e[0] == loop[-1] and not loop.has(e[1]):
+				loop.append(e[1])
+				break
+			if e[1] == loop[-1] and not loop.has(e[0]):
+				loop.append(e[0])
+				break
+
+	if loop.size() != 4:
+		return
+
+	var p3 := []
+	var puv := []
+	for vi in loop:
+		p3.append(xf * bf.positions[vi])
+		puv.append(bf.uvs[vi])
+
 	var center_world := Vector3.ZERO
-	for vi in quad:
-		center_world += brush.global_transform * bf.positions[vi]
+	for v in p3:
+		center_world += v
 	center_world /= 4.0
 
 	var ray_origin := camera.project_ray_origin(mouse_pos)
@@ -803,86 +965,14 @@ func _draw_texel_split_axis_line(gizmo: EditorNode3DGizmo, brush: TileModeller) 
 	if hit == null:
 		return
 
-	var p3_raw := []
-	var puv_raw := []
-	for vi in quad:
-		p3_raw.append(brush.global_transform * bf.positions[vi])
-		puv_raw.append(bf.uvs[vi])
-
 	var get_d_uv = func(uv: Vector2) -> float:
 		return uv.y if active_split_axis == "horizontal" else uv.x
-
-	var uv_center := Vector2.ZERO
-	for uv in puv_raw:
-		uv_center += uv
-	uv_center /= 4.0
-
-	var order := []
-	for i in range(4):
-		order.append({
-			"i": i,
-			"a": atan2(puv_raw[i].y - uv_center.y, puv_raw[i].x - uv_center.x)
-		})
-	order.sort_custom(func(x, y): return x.a < y.a)
-
-	var p3 := []
-	var puv := []
-	for e in order:
-		p3.append(p3_raw[e.i])
-		puv.append(puv_raw[e.i])
-
-	if compute_triangle_normal(p3[0], p3[1], p3[2]).dot(normal_world) < 0.0:
-		p3.reverse()
-		puv.reverse()
-
-	var du_world := Vector3.ZERO
-	var dv_world := Vector3.ZERO
-	for i in range(4):
-		var du = puv[i].x - uv_center.x
-		var dv = puv[i].y - uv_center.y
-		du_world += (p3[i] - center_world) * du
-		dv_world += (p3[i] - center_world) * dv
-
-	if du_world.length() < 1e-6 or dv_world.length() < 1e-6:
-		return
-
-	du_world = du_world.normalized()
-	dv_world = dv_world.normalized()
-
-	var min_u := INF
-	var max_u := -INF
-	var min_v := INF
-	var max_v := -INF
-	for uv in puv:
-		min_u = min(min_u, uv.x)
-		max_u = max(max_u, uv.x)
-		min_v = min(min_v, uv.y)
-		max_v = max(max_v, uv.y)
-
-	var umin_p := INF
-	var umax_p := -INF
-	var vmin_p := INF
-	var vmax_p := -INF
-	for i in range(4):
-		var rp = p3[i] - center_world
-		var up = rp.dot(du_world)
-		var vp = rp.dot(dv_world)
-		umin_p = min(umin_p, up)
-		umax_p = max(umax_p, up)
-		vmin_p = min(vmin_p, vp)
-		vmax_p = max(vmax_p, vp)
-
-	if abs(umax_p - umin_p) < 1e-8 or abs(vmax_p - vmin_p) < 1e-8:
-		return
-
-	var use_v := active_split_axis == "horizontal"
 
 	var best_uv := 0.0
 	var best_d := INF
 
 	for i in range(4):
 		var j := (i + 1) % 4
-
 		var a3 = p3[i]
 		var b3 = p3[j]
 		var auv = puv[i]
@@ -895,28 +985,28 @@ func _draw_texel_split_axis_line(gizmo: EditorNode3DGizmo, brush: TileModeller) 
 		var d = p_edge.distance_squared_to(hit)
 		if d < best_d:
 			best_d = d
-			best_uv = lerp(auv.y if use_v else auv.x,
-						   buv.y if use_v else buv.x,
-						   t)
+			best_uv = lerp(
+				get_d_uv.call(auv),
+				get_d_uv.call(buv),
+				t
+			)
 
-	var uv_u := best_uv if not use_v else 0.0
-	var uv_v := best_uv if use_v else 0.0
-
-	
 	var tileset := brush.tileset
-	var src := tileset.get_source(brush.brush_form.face_source_by_id[(brush.brush_form.quad_face_id_by_key[quad])])
+	var face_key := bf.make_quad_key(quad)
+	var face_id := bf.quad_face_id_by_key.get(face_key, -1)
+	if face_id == -1:
+		return
+
+	var src := tileset.get_source(bf.face_source_by_id.get(face_id, -1))
 	if src == null or src.texture == null:
 		return
 
-	var atlas_size_px = src.texture.get_size()
-	var texel_uv_x := 1.0 / float(atlas_size_px.x)
-	var texel_uv_y := 1.0 / float(atlas_size_px.y)
-
-	var texel_coord: float
-	if active_split_axis == "horizontal":
-		texel_coord = round(uv_v / texel_uv_y) * texel_uv_y
-	else:
-		texel_coord = round(uv_u / texel_uv_x) * texel_uv_x
+	var atlas_size = src.texture.get_size()
+	var step := (
+		1.0 / float(atlas_size.y)
+		if active_split_axis == "horizontal"
+		else 1.0 / float(atlas_size.x)
+	)
 
 	var dmin := INF
 	var dmax := -INF
@@ -925,24 +1015,22 @@ func _draw_texel_split_axis_line(gizmo: EditorNode3DGizmo, brush: TileModeller) 
 		dmin = min(dmin, d)
 		dmax = max(dmax, d)
 
-	var step := texel_uv_y if active_split_axis == "horizontal" else texel_uv_x
 	var inner_min := dmin + step
 	var inner_max := dmax - step
-	#if inner_max <= inner_min + 1e-9:
-		#return
-	texel_coord = clamp(texel_coord, inner_min, inner_max)
-	texel_coord = round(texel_coord / step) * step
+	if inner_max <= inner_min:
+		return
+
+	var texel_coord = round(best_uv / step) * step
 	texel_coord = clamp(texel_coord, inner_min, inner_max)
 	active_split_texel_coord = texel_coord
-	var hits_world := []
 
+	var hits := []
 	for i in range(4):
 		var j := (i + 1) % 4
-
-		var auv: Vector2 = puv[i]
-		var buv: Vector2 = puv[j]
-		var a3: Vector3  = p3[i]
-		var b3: Vector3  = p3[j]
+		var auv = puv[i]
+		var buv = puv[j]
+		var a3 = p3[i]
+		var b3 = p3[j]
 
 		var da = get_d_uv.call(auv) - texel_coord
 		var db = get_d_uv.call(buv) - texel_coord
@@ -953,50 +1041,29 @@ func _draw_texel_split_axis_line(gizmo: EditorNode3DGizmo, brush: TileModeller) 
 				continue
 			var t = (texel_coord - get_d_uv.call(auv)) / denom
 			t = clamp(t, 0.0, 1.0)
-			hits_world.append(a3.lerp(b3, t))
-		elif abs(da) < 1e-8:
-			var too_close := false
-			for h in hits_world:
-				if h.distance_to(a3) < 1e-6:
-					too_close = true
-					break
-			if not too_close:
-				hits_world.append(a3)
+			hits.append(a3.lerp(b3, t))
 
-	if hits_world.size() < 2:
+	if hits.size() != 2:
 		return
 
-	if hits_world.size() > 2:
-		var best_i := 0
-		var best_j := 1
-		best_d = -INF
-		for ii in range(hits_world.size()):
-			for jj in range(ii + 1, hits_world.size()):
-				var d = hits_world[ii].distance_squared_to(hits_world[jj])
-				if d > best_d:
-					best_d = d
-					best_i = ii
-					best_j = jj
-		hits_world = [hits_world[best_i], hits_world[best_j]]
+	p0 = hits[0]
+	p1 = hits[1]
 
-	var p0 = hits_world[0]
-	var p1 = hits_world[1]
-
-	var line_dir = (p1 - p0).normalized()
+	var line_dir := (p1 - p0).normalized()
 	var side_dir := normal_world.cross(line_dir).normalized()
 
 	var half_w := 0.005
 	var half_t := 0.003
 
-	var f0 = p0 + side_dir * half_w + normal_world * half_t
-	var f1 = p1 + side_dir * half_w + normal_world * half_t
-	var f2 = p0 - side_dir * half_w + normal_world * half_t
-	var f3 = p1 - side_dir * half_w + normal_world * half_t
+	var f0 := p0 + side_dir * half_w + normal_world * half_t
+	var f1 := p1 + side_dir * half_w + normal_world * half_t
+	var f2 := p0 - side_dir * half_w + normal_world * half_t
+	var f3 := p1 - side_dir * half_w + normal_world * half_t
 
-	var b0 = p0 + side_dir * half_w - normal_world * half_t
-	var b1 = p1 + side_dir * half_w - normal_world * half_t
-	var b2 = p0 - side_dir * half_w - normal_world * half_t
-	var b3 = p1 - side_dir * half_w - normal_world * half_t
+	var b0 := p0 + side_dir * half_w - normal_world * half_t
+	var b1 := p1 + side_dir * half_w - normal_world * half_t
+	var b2 := p0 - side_dir * half_w - normal_world * half_t
+	var b3 := p1 - side_dir * half_w - normal_world * half_t
 
 	split_line_mesh.clear_surfaces()
 	split_line_mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES, split_line_material)
@@ -1007,21 +1074,10 @@ func _draw_texel_split_axis_line(gizmo: EditorNode3DGizmo, brush: TileModeller) 
 	split_line_mesh.surface_add_vertex(b2); split_line_mesh.surface_add_vertex(b1); split_line_mesh.surface_add_vertex(b0)
 	split_line_mesh.surface_add_vertex(b2); split_line_mesh.surface_add_vertex(b3); split_line_mesh.surface_add_vertex(b1)
 
-	split_line_mesh.surface_add_vertex(b0); split_line_mesh.surface_add_vertex(b1); split_line_mesh.surface_add_vertex(f0)
-	split_line_mesh.surface_add_vertex(b1); split_line_mesh.surface_add_vertex(f1); split_line_mesh.surface_add_vertex(f0)
-
-	split_line_mesh.surface_add_vertex(b2); split_line_mesh.surface_add_vertex(f2); split_line_mesh.surface_add_vertex(b3)
-	split_line_mesh.surface_add_vertex(b3); split_line_mesh.surface_add_vertex(f2); split_line_mesh.surface_add_vertex(f3)
-
-	split_line_mesh.surface_add_vertex(b0); split_line_mesh.surface_add_vertex(f0); split_line_mesh.surface_add_vertex(b2)
-	split_line_mesh.surface_add_vertex(b2); split_line_mesh.surface_add_vertex(f0); split_line_mesh.surface_add_vertex(f2)
-
-	split_line_mesh.surface_add_vertex(b1); split_line_mesh.surface_add_vertex(b3); split_line_mesh.surface_add_vertex(f1)
-	split_line_mesh.surface_add_vertex(b3); split_line_mesh.surface_add_vertex(f3); split_line_mesh.surface_add_vertex(f1)
-
 	split_line_mesh.surface_end()
 
 	gizmo.add_mesh(split_line_mesh, split_line_material, Transform3D.IDENTITY)
+
 
 
 func compute_triangle_normal(a: Vector3, b: Vector3, c: Vector3) -> Vector3:
@@ -1253,6 +1309,8 @@ func _begin_handle_action(
 	undo_redo = EditorInterface.get_editor_undo_redo()
 	var brush = gizmo.get_node_3d()
 	var node = gizmo.get_node_3d().brush_form
+	drag_origin_handle_world = brush.global_transform * node.positions[handle_id]
+	drag_origin_world = drag_origin_handle_world
 
 	if brush.tool_mode == TileModeller.TOOL_MODE.PAINT_VERTEX:
 		paint_vertex(gizmo,handle_id,secondary)
@@ -1324,77 +1382,65 @@ func _find_quad_under_mouse(
 	var ray_origin := camera.project_ray_origin(mouse_pos)
 	var ray_dir    := camera.project_ray_normal(mouse_pos)
 
+	var xf := brush.global_transform
+	var positions := bf.positions
+
 	var best_quad := -1
-	var best_depth := INF
+	var best_dist := INF
 
-	for qi in range(quads.size()):
+	for qi in quads.size():
 		var quad := quads[qi]
-		if quad.size() != 4:
-			continue
 
-		var a := bf.positions[quad[0]]
-		var b := bf.positions[quad[1]]
-		var c := bf.positions[quad[2]]
+		if quad.size() == 3:
+			var a := xf * positions[quad[0]]
+			var b := xf * positions[quad[1]]
+			var c := xf * positions[quad[2]]
 
-		var normal_local := (b - a).cross(c - a)
-		if normal_local.length_squared() < 1e-8:
-			continue
+			var hit := Geometry3D.ray_intersects_triangle(
+				ray_origin, ray_dir,
+				a, b, c
+			)
 
-		var normal_world := (brush.global_transform.basis * normal_local).normalized()
+			if hit:
+				var dist := ray_origin.distance_squared_to(hit)
+				if dist < best_dist:
+					best_dist = dist
+					best_quad = qi
 
-		var center_local := Vector3.ZERO
-		for v in quad:
-			center_local += bf.positions[v]
-		center_local /= 4.0
-		var center_world := brush.global_transform * center_local
+		elif quad.size() == 4:
+			var a := xf * positions[quad[0]]
+			var b := xf * positions[quad[1]]
+			var c := xf * positions[quad[2]]
+			var d := xf * positions[quad[3]]
 
-		var plane := Plane(normal_world, center_world.dot(normal_world))
-		var hit := plane.intersects_ray(ray_origin, ray_dir)
-		if hit == null:
-			continue
+			# triangle 1
+			var hit := Geometry3D.ray_intersects_triangle(
+				ray_origin, ray_dir,
+				a, b, c
+			)
 
-		var axes := TileEditorPlugin.plane_axes_from_normal_hardcoded(normal_world)
-		var right = axes.right.normalized()
-		var down  = axes.down.normalized()
+			if hit:
+				var dist := ray_origin.distance_squared_to(hit)
+				if dist < best_dist:
+					best_dist = dist
+					best_quad = qi
+			else:
+				# triangle 2
+				hit = Geometry3D.ray_intersects_triangle(
+					ray_origin, ray_dir,
+					b, d, c
+				)
 
-		if right.cross(down).dot(normal_world) < 0.0:
-			down = -down
-
-		var poly := []
-		var center_2d := Vector2.ZERO
-
-		for vi in quad:
-			var w := brush.global_transform * bf.positions[vi]
-			var rel := w - center_world
-			var p2 := Vector2(rel.dot(right), rel.dot(down))
-			poly.append(p2)
-			center_2d += p2
-		center_2d /= 4.0
-
-		poly.sort_custom(func(x, y):
-			return atan2(x.y - center_2d.y, x.x - center_2d.x) < atan2(y.y - center_2d.y, y.x - center_2d.x)
-		)
-
-		var area := 0.0
-		for i in range(4):
-			var p0 = poly[i]
-			var p1 = poly[(i + 1) % 4]
-			area += p0.x * p1.y - p1.x * p0.y
-		if area < 0.0:
-			poly.reverse()
-
-		var rel_hit = hit - center_world
-		var hit_2d := Vector2(rel_hit.dot(right), rel_hit.dot(down))
-
-		if not _point_in_convex_polygon_2d(hit_2d, poly):
-			continue
-
-		var depth = (hit - ray_origin).length()
-		if depth < best_depth:
-			best_depth = depth
-			best_quad = qi
+				if hit:
+					var dist := ray_origin.distance_squared_to(hit)
+					if dist < best_dist:
+						best_dist = dist
+						best_quad = qi
 
 	return best_quad
+
+
+
 
 
 func _quad_long_axis_local(node: BrushForm, quad: Array) -> Vector3:
@@ -1532,8 +1578,16 @@ func move_vertex(
 			return
 
 
-		var snap = float(brush.vertex_snap)/float(brush.brush_form.pixels_to_world_unit) * Vector3.ONE
-		target_world_pos = hit.snapped(snap)
+		var snap_step := float(brush.vertex_snap) / float(brush.brush_form.pixels_to_world_unit)
+
+		var delta = hit - drag_origin_world
+
+		delta.x = round(delta.x / snap_step) * snap_step
+		delta.y = round(delta.y / snap_step) * snap_step
+		delta.z = round(delta.z / snap_step) * snap_step
+
+		target_world_pos = drag_origin_world + delta
+
 
 
 	var current_world = brush.global_transform * node.positions[handle_id]

@@ -6,6 +6,7 @@ enum TOOL_MODE {TILE, MOVE_VERTEX, PAINT_VERTEX, QUAD_SPLIT}
 var tool_mode = TOOL_MODE.TILE
 var quad_texel_split = true
 var vertex_color:Color = Color.WHITE
+
 @onready var vertex_snap:float = 16 if !brush_form else float(brush_form.pixels_to_world_unit)
 var orientation:int = 0
 @onready var tile_corners:Array = PackedVector2Array([
@@ -67,7 +68,7 @@ func get_material_for_source(source_id: int, tileset: TileSet) -> Material:
 	material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	material.vertex_color_is_srgb = true
 	material.vertex_color_use_as_albedo = true
-	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	material.cull_mode = BaseMaterial3D.CULL_BACK
 
 	tileset_source_materials[source_id] = material
 	return material
@@ -226,17 +227,68 @@ func create_mesh_from_forms() -> void:
 					form.colors[v] if v < form.colors.size() else Color.WHITE
 				)
 
+			var local_of := {}
+			for k in range(face.size()):
+				local_of[face[k]] = base_index + k
+
 			if face.size() == 3:
-				b.indices.append_array([
-					base_index + 0,
-					base_index + 1,
-					base_index + 2,
-				])
+
+				var tri_t := -1
+				for t in range(0, form.indices.size(), 3):
+					var a := form.indices[t]
+					b = form.indices[t + 1]
+					var c := form.indices[t + 2]
+					if local_of.has(a) and local_of.has(b) and local_of.has(c):
+						tri_t = t
+						break
+
+				if tri_t != -1:
+					b.indices.append_array([
+						local_of[form.indices[tri_t]],
+						local_of[form.indices[tri_t + 1]],
+						local_of[form.indices[tri_t + 2]],
+					])
+				else:
+					b.indices.append_array([
+						base_index + 0,
+						base_index + 1,
+						base_index + 2,
+					])
+
 			elif face.size() == 4:
-				b.indices.append_array([
-					base_index + 0, base_index + 1, base_index + 2,
-					base_index + 1, base_index + 3, base_index + 2,
-				])
+				var quad_set := {}
+				for v in face:
+					quad_set[v] = true
+
+				var tri_offsets: Array[int] = []
+				for t in range(0, form.indices.size(), 3):
+					var a := form.indices[t]
+					var b2 := form.indices[t + 1]
+					var c := form.indices[t + 2]
+					if quad_set.has(a) and quad_set.has(b2) and quad_set.has(c):
+						tri_offsets.append(t)
+						if tri_offsets.size() == 2:
+							break
+
+				if tri_offsets.size() == 2:
+					var t0 := tri_offsets[0]
+					var t1 := tri_offsets[1]
+
+					b.indices.append_array([
+						local_of[form.indices[t0]],
+						local_of[form.indices[t0 + 1]],
+						local_of[form.indices[t0 + 2]],
+
+						local_of[form.indices[t1]],
+						local_of[form.indices[t1 + 1]],
+						local_of[form.indices[t1 + 2]],
+					])
+				else:
+					b.indices.append_array([
+						base_index + 0, base_index + 1, base_index + 2,
+						base_index + 1, base_index + 3, base_index + 2,
+					])
+
 			else:
 				for i in range(1, face.size() - 1):
 					b.indices.append_array([
@@ -244,6 +296,7 @@ func create_mesh_from_forms() -> void:
 						base_index + i,
 						base_index + i + 1,
 					])
+
 
 		for source_id in batches.keys():
 			var b = batches[source_id]
@@ -275,6 +328,7 @@ func create_mesh_from_forms() -> void:
 			var material: StandardMaterial3D
 			if tileset_source_materials.has(source_id):
 				material = tileset_source_materials[source_id]
+				material.cull_mode = BaseMaterial3D.CULL_BACK
 			else:
 				material = StandardMaterial3D.new()
 				material.cull_mode = BaseMaterial3D.CULL_DISABLED

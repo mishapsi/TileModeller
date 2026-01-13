@@ -828,9 +828,6 @@ func _place_custom_quad_internal(
 	if atlas_src == null or atlas_src.texture == null:
 		return
 
-	# -------------------------------------------------
-	# Canonical quad order (0,1,3,2)
-	# -------------------------------------------------
 	var p := [
 		world_points[0],
 		world_points[1],
@@ -838,9 +835,6 @@ func _place_custom_quad_internal(
 		world_points[2],
 	]
 
-	# -------------------------------------------------
-	# Choose pivot EXACTLY like preview
-	# -------------------------------------------------
 	var pivot: Vector3
 	if brush.select_mode == TileModeller.TileSelectMode.TILES:
 		pivot = Vector3.ZERO
@@ -850,9 +844,6 @@ func _place_custom_quad_internal(
 	else:
 		pivot = p[0]
 
-	# -------------------------------------------------
-	# Compute scale EXACTLY like preview
-	# -------------------------------------------------
 	var current_size = p[0].distance_to(p[1])
 	if current_size < 1e-8:
 		return
@@ -860,17 +851,11 @@ func _place_custom_quad_internal(
 	var target_size = brush.brush_form.get_quad_size(tile_size.x * current_size)
 	var scale = target_size / current_size
 
-	# -------------------------------------------------
-	# Apply UNIFORM scaling (NO rotation)
-	# -------------------------------------------------
 	for i in range(p.size()):
 		var v = p[i] - pivot
 		v *= scale
 		p[i] = pivot + v
 
-	# -------------------------------------------------
-	# Build UVs
-	# -------------------------------------------------
 	var atlas_size := Vector2(atlas_src.texture.get_size())
 
 	var quad_uvs_raw := generate_custom_quad_uvs(
@@ -887,9 +872,6 @@ func _place_custom_quad_internal(
 		quad_uvs_raw[2],
 	]
 
-	# -------------------------------------------------
-	# Emit geometry
-	# -------------------------------------------------
 	var base := positions.size()
 
 	for v in p:
@@ -904,9 +886,6 @@ func _place_custom_quad_internal(
 		base + 1, base + 3, base + 2
 	])
 
-	# -------------------------------------------------
-	# Face bookkeeping
-	# -------------------------------------------------
 	var quad_verts := PackedInt32Array([
 		base + 0,
 		base + 1,
@@ -1257,6 +1236,166 @@ func split_quad(
 	rebuild_quad_source_by_key()
 	notify_property_list_changed()
 
+func flip_quad_diagonal_undoable(quad_index: int) -> void:
+	var undo_redo := EditorInterface.get_editor_undo_redo()
+	var before_state = _get_mesh_state()
+
+	undo_redo.create_action("Flip Quad Diagonal", UndoRedo.MERGE_ENDS)
+
+	undo_redo.add_do_method(self, "flip_quad_diagonal", quad_index)
+	undo_redo.add_undo_method(self, "_set_mesh_state", before_state)
+
+	undo_redo.commit_action()
+func flip_quad_diagonal(quad_index: int) -> void:
+	var quads := get_quads()
+	if quad_index < 0 or quad_index >= quads.size():
+		return
+
+	var quad := quads[quad_index]
+	if quad.size() != 4:
+		return
+
+	var orig_key := make_quad_key(quad)
+	var face_id := quad_face_id_by_key.get(orig_key, -1)
+	var source_id := face_source_by_id.get(face_id, -1)
+
+	var qpos: Array = []
+	var quv: Array = []
+	var qn := normals[quad[0]]
+
+	for vi in quad:
+		qpos.append(positions[vi])
+		quv.append(uvs[vi])
+
+	var qset := {}
+	for vi in quad:
+		qset[vi] = true
+
+	var tri_a := PackedInt32Array()
+	var tri_b := PackedInt32Array()
+
+	for t in range(0, indices.size(), 3):
+		var a := indices[t]
+		var b := indices[t + 1]
+		var c := indices[t + 2]
+
+		if qset.has(a) and qset.has(b) and qset.has(c):
+			if tri_a.is_empty():
+				tri_a = PackedInt32Array([a, b, c])
+			elif tri_b.is_empty():
+				tri_b = PackedInt32Array([a, b, c])
+				break
+
+	if tri_a.is_empty() or tri_b.is_empty():
+		return
+
+	var shared := []
+	for x in tri_a:
+		for y in tri_b:
+			if x == y:
+				shared.append(x)
+
+	if shared.size() != 2:
+		return
+
+	var diag0 = shared[0]
+	var diag1 = shared[1]
+
+	var other := []
+	for vi in quad:
+		if vi != diag0 and vi != diag1:
+			other.append(vi)
+
+	if other.size() != 2:
+		return
+
+	var od0 = other[0]
+	var od1 = other[1]
+
+	var reorder_tri = func(i0: int, i1: int, i2: int) -> PackedInt32Array:
+		var n := compute_triangle_normal(
+			positions[i0],
+			positions[i1],
+			positions[i2]
+		)
+		if n.dot(qn) < 0.0:
+			return PackedInt32Array([i0, i2, i1])
+		return PackedInt32Array([i0, i1, i2])
+
+	delete_quad(quad_index)
+
+	var base := positions.size()
+	for i in range(4):
+		positions.append(qpos[i])
+		normals.append(qn)
+		colors.append(Color.WHITE)
+		uvs.append(quv[i])
+
+	var map := {}
+	for i in range(4):
+		map[quad[i]] = base + i
+
+	var t1 := reorder_tri.call(map[od0], map[diag0], map[od1])
+	var t2 := reorder_tri.call(map[od0], map[od1], map[diag1])
+
+	indices.append_array([
+		t1[0], t1[1], t1[2],
+		t2[0], t2[1], t2[2]
+	])
+
+	if face_id != -1:
+		var new_quad := PackedInt32Array([
+			base + 0,
+			base + 1,
+			base + 2,
+			base + 3
+		])
+		var new_key := make_quad_key(new_quad)
+		quad_face_id_by_key[new_key] = face_id
+		if source_id != -1:
+			face_source_by_id[face_id] = source_id
+
+	invalidate_triangle_lookup()
+	rebuild_quad_source_by_key()
+	notify_property_list_changed()
+
+
+
+func split_quad_along_texel_undoable(
+	quad_index: int,
+	axis: String,
+	texel_coord: float,
+	normal_world: Vector3,
+	right_world: Vector3,
+	down_world: Vector3
+) -> void:
+	var undo_redo := EditorInterface.get_editor_undo_redo()
+
+	var before_state = _get_mesh_state()
+
+	undo_redo.create_action(
+		"Split Quad",
+		UndoRedo.MERGE_ENDS
+	)
+
+	undo_redo.add_do_method(
+		self,
+		"split_quad_along_texel",
+		quad_index,
+		axis,
+		texel_coord,
+		normal_world,
+		right_world,
+		down_world
+	)
+
+	undo_redo.add_undo_method(
+		self,
+		"_set_mesh_state",
+		before_state
+	)
+
+	undo_redo.commit_action()
 
 
 func split_quad_along_texel(
